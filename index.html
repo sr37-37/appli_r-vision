@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Révision</title>
+<style>
+:root {
+  --bg0:#0F0F10; --bg1:#151516; --bg2:#1D1D1F; --bg3:#2A2A2C; --bg4:#3A3A3D; --card:#0A0A0B;
+  --line:#303033; --t1:#EDEBE7; --t2:#B3B0AB; --t3:#7C7A77; --t4:#55534F;
+  --accent:#D8D4CD; --accentDim:#8F8C87; --onAccent:#141415;
+  --due:#F1EEE8; --new:#8A8883; --none:#3B3B3E;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin:0; background:var(--bg0); color:var(--t1);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; }
+#app { max-width: 780px; margin: 0 auto; min-height: 100vh; display:flex; flex-direction:column; }
+
+/* En-tête */
+header { position: sticky; top: 0; z-index: 5; background: var(--bg1); border-bottom: 1px solid var(--line);
+  display:flex; align-items:center; gap:6px; padding: 10px 16px; }
+header .logo { font-weight: 700; font-size: 18px; margin-right: 14px; }
+.tab { padding: 8px 12px; border-radius: 10px; color: var(--t3); font-weight: 600; position: relative; }
+.tab:hover { background: var(--bg2); color: var(--t2); }
+.tab.on { background: var(--bg3); color: var(--t1); }
+.badge { background: var(--accent); color: var(--onAccent); border-radius: 10px; font-size: 12px; font-weight: 700;
+  padding: 1px 7px; margin-left: 6px; }
+.sp { flex: 1; }
+main { padding: 18px 16px 60px; flex: 1; }
+
+/* Boutons */
+.primary { background: var(--accent); color: var(--onAccent); padding: 10px 18px; border-radius: 12px; font-weight: 700; }
+.primary:hover { background: var(--t1); }
+.primary:disabled { opacity: .4; cursor: default; }
+.ghost { background: var(--bg2); border: 1px solid var(--line); padding: 9px 14px; border-radius: 12px; color: var(--t1); }
+.ghost:hover { background: var(--bg3); }
+.danger { color: var(--t2); }
+.link { color: var(--accent); padding: 4px 0; }
+.link:hover { text-decoration: underline; }
+
+/* Accueil */
+.search { width:100%; background: var(--bg2); border:1px solid var(--line); border-radius: 12px; padding: 11px 14px; margin-bottom: 14px; }
+.search:focus, textarea:focus, input:focus, select:focus { outline: 2px solid var(--accentDim); outline-offset: 0; }
+.section { background: var(--bg3); color: var(--t2); font-size: 12px; font-weight: 700; letter-spacing: .08em;
+  padding: 8px 14px; margin-top: 14px; border-radius: 10px 10px 0 0; }
+.row { display:flex; align-items:center; gap:14px; padding: 14px; background: var(--card); border-bottom: 1px solid var(--line); cursor:pointer; }
+.row:hover { background: var(--bg2); }
+.row:last-child { border-radius: 0 0 10px 10px; }
+.rowmain { flex:1; min-width:0; }
+.name { font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { color: var(--t3); font-size: 14px; margin-top: 3px; }
+.badges { width: 120px; text-align:right; font-size: 12px; font-weight: 700; letter-spacing:.04em; }
+.badges .d { color: var(--t3); } .badges .d.on { color: var(--due); }
+.badges .n { color: var(--new); min-height: 16px; }
+.bar { height: 7px; border-radius: 4px; background: var(--none); margin: 4px 0; }
+.bar.due { background: var(--due); } .bar.new { background: var(--new); }
+.empty { text-align:center; color: var(--t3); padding: 70px 20px; }
+.empty h2 { color: var(--t1); margin: 10px 0 6px; }
+
+/* Titres de page */
+.pagehead { display:flex; align-items:center; gap:10px; margin-bottom: 8px; }
+.pagehead h1 { font-size: 26px; margin: 0; flex: 1; min-width: 0; overflow:hidden; text-overflow: ellipsis; }
+h2.sub { font-size: 22px; margin: 28px 0 12px; display:flex; align-items:center; gap:12px; }
+.seg { display:inline-flex; background: var(--bg2); border-radius: 12px; padding: 3px; margin-left:auto; }
+.seg button { padding: 6px 12px; border-radius: 9px; color: var(--t3); font-weight:600; font-size: 14px; }
+.seg button.on { background: var(--bg4); color: var(--t1); }
+
+/* Graphique */
+.chart { padding-top: 22px; }
+.plot { position: relative; height: 180px; margin-left: 36px; }
+.gl { position:absolute; left:0; right:0; border-top: 1px solid var(--line); }
+.gl span { position:absolute; left:-36px; top:-10px; width:28px; text-align:right; color: var(--t3); font-size: 13px; }
+.bars { position:absolute; inset:0; display:flex; align-items:flex-end; }
+.col { flex:1; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; }
+.col .val { font-weight: 600; font-size: 16px; margin-bottom: 3px; min-height: 0; }
+.col .b { width: 58%; background: var(--accentDim); border-radius: 6px 6px 0 0; }
+.col .b.hl { background: var(--due); }
+.col .b.zero { background: var(--bg4); }
+.labels { display:flex; margin-left: 36px; margin-top: 8px; }
+.labels div { flex:1; text-align:center; color: var(--t2); font-size: 13px; }
+.labels small { display:block; color: var(--t3); }
+
+/* Cartes */
+.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow:hidden; cursor:pointer; min-height: 150px; display:flex; flex-direction:column; }
+.tile:hover { border-color: var(--accentDim); }
+.tile .th { background: var(--bg4); color: var(--t2); font-size: 12px; font-weight:700; padding: 5px 10px; letter-spacing: .04em; }
+.tile.due .th { background: var(--due); color: var(--onAccent); }
+.tile .tb { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; padding: 12px; overflow:hidden; word-break: break-word; }
+.plus { width: 40px; height: 40px; border-radius: 12px; background: var(--bg2); border: 1px solid var(--line); font-size: 24px; line-height: 1; color: var(--accent); }
+.plus:hover { background: var(--bg3); }
+.cta { display:flex; align-items:center; gap: 12px; width:100%; margin-top: 26px; padding: 18px 20px; border-radius: 18px;
+  background: var(--bg2); border: 1px solid var(--line); font-size: 20px; font-weight: 700; color: var(--accent); text-align:left; }
+.cta:hover { background: var(--bg3); }
+.cta:disabled { opacity: .45; cursor: default; }
+
+/* Stats / Plan */
+.tiles { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { background: var(--bg2); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+.stat b { display:block; font-size: 32px; }
+.stat span { color: var(--t3); font-size: 14px; }
+.stat.strong { background: var(--bg3); border-color: var(--accentDim); }
+.box { background: var(--bg2); border-radius: 16px; padding: 16px; margin-top: 8px; }
+.lines div { display:flex; justify-content:space-between; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+.lines div:last-child { border: 0; }
+.chips { display:flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.chip { background: var(--bg4); border-radius: 12px; padding: 6px 12px; font-weight: 600; font-size: 14px; }
+.chip.dim { background: transparent; color: var(--t3); }
+.muted { color: var(--t3); font-size: 14px; }
+.btnrow { display:flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+
+/* Fenêtres */
+.overlay { position: fixed; inset: 0; background: rgba(5,5,6,.72); display:flex; align-items:center; justify-content:center; padding: 16px; z-index: 20; }
+.modal { background: var(--bg1); border: 1px solid var(--line); border-radius: 20px; padding: 22px; width: 100%; max-width: 520px; max-height: 92vh; overflow:auto; }
+.modal h2 { margin: 0 0 14px; font-size: 22px; }
+.modal label { display:block; color: var(--t3); font-size: 13px; font-weight: 700; letter-spacing:.04em; margin: 12px 0 5px; text-transform: uppercase; }
+.modal textarea, .modal input, .modal select { width: 100%; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
+.modal textarea { resize: vertical; min-height: 96px; }
+.actions { display:flex; gap: 10px; align-items:center; margin-top: 20px; }
+
+/* Révision */
+.review { width: 100%; max-width: 780px; margin: 0 auto; min-height: 100vh; display:flex; flex-direction:column; padding: 14px 16px 20px; }
+.rtop { display:flex; align-items:center; gap: 12px; margin-bottom: 10px; }
+.rtop .count { flex:1; text-align:center; font-weight: 700; }
+.progress { height: 4px; background: var(--bg3); border-radius: 2px; overflow:hidden; margin-bottom: 14px; }
+.progress div { height:100%; background: var(--accent); }
+.rcard { flex:1; background: var(--card); border: 1px solid var(--line); border-radius: 20px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 28px; text-align:center; font-size: 28px; line-height: 1.35; cursor:pointer; min-height: 320px; word-break: break-word; white-space: pre-wrap; }
+.rcard hr { border:0; border-top: 1px solid var(--line); align-self: stretch; margin: 26px 0; }
+.answers { display:flex; gap: 12px; margin-top: 14px; }
+.answers button { flex:1; border-radius: 18px; padding: 14px; font-size: 19px; font-weight: 700; }
+.answers small { display:block; font-size: 13px; font-weight: 500; margin-top: 3px; }
+.answers .no { background: var(--bg2); border: 1px solid var(--line); }
+.answers .no small { color: var(--t3); }
+.answers .yes { background: var(--accent); color: var(--onAccent); }
+.answers .yes small { color: var(--bg4); }
+.big { width:100%; margin-top: 14px; padding: 18px; border-radius: 18px; font-size: 20px; }
+kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; font-size: 12px; color: var(--t2); }
+.done { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap: 8px; }
+.done h2 { font-size: 30px; margin: 0; }
+
+@media (max-width: 560px) {
+  header .logo { display:none; }
+  .badges { width: 100px; }
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modal"></div>
+
+<script>
+'use strict';
+
+/* ========== Calendrier de révision (courbe d'Ebbinghaus) ==========
+   Semaine 1 : J1 x2 (la 2e ~3 h après), J2, J3, J5, J7 (rien les J4 et J6).
+   Ensuite : semaines 3, 5, 8, 12, 16, puis une révision toutes les 4 semaines (20, 24, 28...).
+   Pour modifier le calendrier, il suffit de changer WEEK1 et WEEKS ci-dessous. */
+const DAY = 864e5, HOUR = 36e5, GAP = 3 * HOUR;
+const WEEK1 = [0, 0, 1, 2, 4, 6];               // décalage en jours depuis J1 (J1, J1, J2, J3, J5, J7)
+const WEEKS = [3, 5, 8, 12, 16];                // semaines des révisions suivantes
+const AFTER_GAP = 4;                            // ensuite : une révision toutes les 4 semaines
+
+const sod = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const addDays = (s, n) => { const d = new Date(s); d.setDate(d.getDate() + n); return d.getTime(); };
+function offsetFor(i) {
+  if (i < WEEK1.length) return WEEK1[i];
+  const k = i - WEEK1.length;
+  const week = k < WEEKS.length ? WEEKS[k] : WEEKS[WEEKS.length - 1] + (k - WEEKS.length + 1) * AFTER_GAP;
+  return (week - 1) * 7;                          // la semaine n commence au jour (n-1)*7 après J1
+}
+const weekFor = (i) => Math.floor(offsetFor(i) / 7) + 1;
+const dueFor = (i, start, now) => (offsetFor(i) === 0 ? now + GAP : addDays(start, offsetFor(i)));
+const isNew = (c) => c.due == null;
+const isDue = (c, n) => c.due != null && c.due <= n;
+function answer(c, knew, now) {
+  if (!knew) {                                    // oubli : retour à J1
+    const s = sod(now);
+    return { ...c, step: 1, startDay: s, due: dueFor(1, s, now), lastReview: now };
+  }
+  const s = c.startDay == null ? sod(now) : c.startDay;
+  const step = c.step + 1;
+  return { ...c, step, startDay: s, due: dueFor(step, s, now), lastReview: now };
+}
+function formatIn(ts, now) {
+  const diff = ts - now;
+  if (diff <= 0) return 'maintenant';
+  if (diff < HOUR) return `dans ${Math.max(1, Math.round(diff / 6e4))} min`;
+  const days = Math.round((sod(ts) - sod(now)) / DAY);
+  if (days <= 0) return `dans ${Math.round(diff / HOUR)} h`;
+  if (days === 1) return 'demain';
+  if (days < 14) return `dans ${days} j`;
+  return `dans ${Math.round(days / 7)} sem.`;
+}
+function formatAgo(ts, now) {
+  if (!ts) return '—';
+  const d = now - ts;
+  if (d < HOUR) return `${Math.max(1, Math.round(d / 6e4))} min`;
+  if (d < DAY) return `${Math.round(d / HOUR)} h`;
+  return `${Math.round(d / DAY)} j`;
+}
+function planLabels(n) {
+  return Array.from({ length: n }, (_, i) => (offsetFor(i) < 7 ? `J${offsetFor(i) + 1}` : `Semaine ${weekFor(i)}`));
+}
+
+/* ========== Données (sauvegardées dans le navigateur) ========== */
+const KEY = 'revision-app/v1';
+const blank = () => ({ decks: [], cards: [], log: [] });
+let data = load();
+function load() {
+  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) return { ...blank(), ...d }; } catch (e) {}
+  return blank();
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const now = () => Date.now();
+
+function stats(deckId) {
+  const t = now();
+  let total = 0, due = 0, fresh = 0, last = null;
+  for (const c of data.cards) {
+    if (deckId && c.deckId !== deckId) continue;
+    total++;
+    if (isNew(c)) fresh++; else if (isDue(c, t)) due++;
+    if (c.lastReview && (!last || c.lastReview > last)) last = c.lastReview;
+  }
+  return { total, due, new: fresh, last };
+}
+function queueFor(deckId) {
+  const t = now();
+  const cs = data.cards.filter((c) => !deckId || c.deckId === deckId);
+  const due = cs.filter((c) => isDue(c, t)).sort((a, b) => a.due - b.due);
+  const fresh = cs.filter(isNew).sort((a, b) => a.createdAt - b.createdAt);
+  return [...due, ...fresh].map((c) => c.id);
+}
+
+/* ========== Utilitaires d'affichage ========== */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const plural = (n, a, b) => (n > 1 ? b : a);
+const DAYS = ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'];
+
+function chart(items) {
+  const max = Math.max(5, ...items.map((d) => d.value));
+  const step = Math.ceil(max / 5), top = step * 5;
+  const grid = [0, 1, 2, 3, 4, 5].map((i) => `<div class="gl" style="bottom:${((i * step) / top) * 100}%"><span>${i * step}</span></div>`).join('');
+  const bars = items.map((d) => `<div class="col">${d.value ? `<div class="val">${d.value}</div>` : ''}<div class="b ${d.hl ? 'hl' : ''} ${d.value ? '' : 'zero'}" style="height:${d.value ? Math.max(3, (d.value / top) * 92) : 1.5}%"></div></div>`).join('');
+  const labels = items.map((d) => `<div>${d.label}${d.sub ? `<small>${d.sub}</small>` : ''}</div>`).join('');
+  return `<div class="chart"><div class="plot">${grid}<div class="bars">${bars}</div></div><div class="labels">${labels}</div></div>`;
+}
+
+/* ========== État de l'interface ========== */
+const ui = { tab: 'home', deckId: null, q: '', chartMode: 'dist', review: null };
+
+function setView(tab, deckId = null) { ui.tab = tab; ui.deckId = deckId; ui.review = null; render(); window.scrollTo(0, 0); }
+
+/* ========== Rendu ========== */
+function render() {
+  const root = $('#app');
+  if (ui.review) { root.innerHTML = reviewView(); return; }
+  const due = stats().due;
+  const tab = (key, label, extra = '') => `<button class="tab ${ui.tab === key || (key === 'home' && ui.tab === 'deck') ? 'on' : ''}" data-act="tab" data-id="${key}">${label}${extra}</button>`;
+  root.innerHTML = `
+    <header>
+      <span class="logo">Révision</span>
+      ${tab('home', 'Accueil')}${tab('stats', 'Stats')}
+      ${tab('review', 'Révision', due ? `<span class="badge">${due}</span>` : '')}
+      ${tab('plan', 'Plan & données')}
+      <span class="sp"></span>
+      ${ui.tab === 'home' ? '<button class="primary" data-act="deck-new">+ Nouveau deck</button>' : ''}
+    </header>
+    <main>${ui.tab === 'home' ? homeView() : ui.tab === 'deck' ? deckView() : ui.tab === 'stats' ? statsView() : ui.tab === 'review' ? reviewTabView() : planView()}</main>`;
+}
+
+function deckRow(d) {
+  const st = stats(d.id), t = now();
+  return `<div class="row" data-act="deck-open" data-id="${d.id}">
+    <div class="rowmain"><div class="name">${esc(d.name)}</div>
+      <div class="meta">${st.total} ${plural(st.total, 'carte', 'cartes')} · modifié il y a ${formatAgo(d.updatedAt, t)}${st.last ? ` · révisé il y a ${formatAgo(st.last, t)}` : ''}</div></div>
+    <div class="badges"><div class="d ${st.due ? 'on' : ''}">${st.due} À FAIRE</div>
+      <div class="bar ${st.due ? 'due' : st.new ? 'new' : ''}"></div>
+      <div class="n">${st.new ? `${st.new} ${plural(st.new, 'NEUVE', 'NEUVES')}` : ''}</div></div>
+  </div>`;
+}
+function homeList() {
+  const q = ui.q.trim().toLowerCase();
+  const decks = data.decks.filter((d) => d.name.toLowerCase().includes(q));
+  if (!data.decks.length) {
+    return `<div class="empty"><div style="font-size:54px">🗂</div><h2>Aucun deck pour l’instant</h2>
+      <p>Crée ton premier deck, ajoute des cartes, et l’application te dira quoi réviser et quand.</p>
+      <button class="primary" data-act="deck-new">+ Nouveau deck</button></div>`;
+  }
+  const withDue = decks.filter((d) => stats(d.id).due > 0).sort((a, b) => stats(b.id).due - stats(a.id).due);
+  const others = decks.filter((d) => stats(d.id).due === 0).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  return (withDue.length ? `<div class="section">À RÉVISER</div>${withDue.map(deckRow).join('')}` : '') +
+    (others.length ? `<div class="section">${withDue.length ? 'AUTRES DECKS' : 'DECKS'}</div>${others.map(deckRow).join('')}` : '') +
+    (!decks.length ? '<div class="empty">Aucun résultat</div>' : '');
+}
+function homeView() {
+  return `<input class="search" id="q" placeholder="Rechercher un deck…" value="${esc(ui.q)}" autocomplete="off"><div id="list">${homeList()}</div>`;
+}
+
+function deckView() {
+  const d = data.decks.find((x) => x.id === ui.deckId);
+  if (!d) { ui.tab = 'home'; return homeView(); }
+  const t = now(), cs = data.cards.filter((c) => c.deckId === d.id), st = stats(d.id);
+  let items;
+  if (ui.chartMode === 'dist') {
+    const b = [0, 0, 0, 0, 0, 0];
+    for (const c of cs) {
+      if (isNew(c)) b[0]++; else if (c.due <= t) b[1]++;
+      else { const x = c.due - t; if (x < DAY) b[2]++; else if (x < 7 * DAY) b[3]++; else if (x < 30 * DAY) b[4]++; else b[5]++; }
+    }
+    const names = ['Neuves', 'Maintenant', '< 24 h', '< 1 sem.', '< 30 j', '30 j +'];
+    items = b.map((v, i) => ({ label: names[i], sub: `${Math.round((v / (cs.length || 1)) * 100)} %`, value: v, hl: i === 1 }));
+  } else {
+    const c7 = [0, 0, 0, 0, 0, 0, 0], today = sod(t);
+    for (const c of cs) {
+      if (isNew(c)) continue;
+      const i = isDue(c, t) ? 0 : Math.round((sod(c.due) - today) / DAY);
+      if (i >= 0 && i < 7) c7[i]++;
+    }
+    items = c7.map((v, i) => ({ label: i === 0 ? 'Auj.' : DAYS[(new Date(today).getDay() + i) % 7], value: v, hl: i === 0 }));
+  }
+  const n = st.due + st.new;
+  return `
+    <div class="pagehead">
+      <button class="ghost" data-act="tab" data-id="home">← Decks</button>
+      <h1>${esc(d.name)}</h1>
+      <button class="ghost" data-act="deck-rename">Renommer</button>
+      <button class="ghost danger" data-act="deck-del">Supprimer</button>
+    </div>
+    <h2 class="sub">Cartes à réviser
+      <span class="seg"><button class="${ui.chartMode === 'dist' ? 'on' : ''}" data-act="chart" data-id="dist">Répartition</button>
+      <button class="${ui.chartMode === 'up' ? 'on' : ''}" data-act="chart" data-id="up">À venir</button></span></h2>
+    ${chart(items)}
+    <h2 class="sub">Cartes <button class="plus" data-act="card-new" title="Nouvelle carte">+</button>
+      <span class="muted" style="margin-left:auto">${cs.length}</span></h2>
+    ${cs.length ? `<div class="grid">${cs.map((c) => `
+      <div class="tile ${isDue(c, t) ? 'due' : ''}" data-act="card-edit" data-id="${c.id}">
+        <div class="th">${isNew(c) ? 'NEUVE' : isDue(c, t) ? 'À RÉVISER' : formatIn(c.due, t).toUpperCase()}</div>
+        <div class="tb">${esc(c.front)}</div></div>`).join('')}</div>` : '<p class="muted">Aucune carte. Clique sur + pour en ajouter.</p>'}
+    <button class="cta" data-act="review-start" data-id="${d.id}" ${n ? '' : 'disabled'}>▶ ${n ? `Réviser ${n} ${plural(n, 'carte', 'cartes')}` : 'Rien à réviser'}</button>`;
+}
+
+function statsView() {
+  const t = now(), today = sod(t), st = stats();
+  const week = [0, 0, 0, 0, 0, 0, 0];
+  for (const l of data.log) { const i = 6 - Math.round((today - sod(l.t)) / DAY); if (i >= 0 && i < 7) week[i]++; }
+  const items = week.map((v, i) => ({ label: i === 6 ? 'Auj.' : DAYS[new Date(today - (6 - i) * DAY).getDay()], value: v, hl: i === 6 }));
+  const forgot = data.log.filter((l) => !l.knew).length;
+  const rate = data.log.length ? Math.round(((data.log.length - forgot) / data.log.length) * 100) + ' %' : '—';
+  const first = data.cards.filter((c) => !isNew(c) && c.step < WEEK1.length).length;
+  const long = data.cards.filter((c) => c.step >= WEEK1.length).length;
+  return `<h1 style="margin:0 0 14px">Statistiques</h1>
+    <div class="tiles"><div class="stat"><b>${st.total}</b><span>Cartes</span></div>
+      <div class="stat strong"><b>${st.due}</b><span>À réviser</span></div>
+      <div class="stat"><b>${week[6]}</b><span>Faites aujourd’hui</span></div>
+      <div class="stat"><b>${rate}</b><span>Réussite</span></div></div>
+    <h2 class="sub">7 derniers jours</h2>${chart(items)}
+    <h2 class="sub">Où en sont tes cartes ?</h2>
+    <div class="box lines"><div><span>Neuves</span><b>${st.new}</b></div>
+      <div><span>Première semaine (J1 à J7)</span><b>${first}</b></div>
+      <div><span>Long terme (semaine 3 et +)</span><b>${long}</b></div></div>`;
+}
+
+function reviewTabView() {
+  const st = stats(), n = st.due + st.new;
+  return `<div class="empty"><div style="font-size:54px">▶</div>
+    <h2>${n ? `${n} ${plural(n, 'carte', 'cartes')} à voir` : 'Tout est à jour'}</h2>
+    <p>${st.due} à réviser · ${st.new} ${plural(st.new, 'neuve', 'neuves')}</p>
+    <button class="primary" style="font-size:18px;padding:14px 30px" data-act="review-start" data-id="" ${n ? '' : 'disabled'}>Commencer</button></div>`;
+}
+
+function planView() {
+  const labels = planLabels(11);
+  return `<h1 style="margin:0 0 6px">Plan de révision</h1>
+    <div class="box"><p style="margin:0">Chaque carte suit la courbe d’Ebbinghaus : des rappels rapprochés la première semaine, puis des révisions de plus en plus espacées (semaines 3, 5, 8, 12, 16, puis toutes les 4 semaines).</p>
+      <div class="chips">${labels.map((l) => `<span class="chip">${l}</span>`).join('')}<span class="chip dim">…</span></div>
+      <p class="muted" style="margin:0">J1 compte deux révisions (la seconde environ 3 h après la première). Pas de révision les J4 et J6. Une carte oubliée recommence à J1.</p></div>
+    <h2 class="sub">Mes données</h2>
+    <div class="box"><p class="muted" style="margin:0 0 6px">Tout est enregistré dans ce navigateur, sur cet ordinateur. Fais une sauvegarde de temps en temps (et avant de vider les données du navigateur).</p>
+      <div class="btnrow"><button class="ghost" data-act="export">⬇ Exporter une sauvegarde</button>
+        <button class="ghost" data-act="import">⬆ Importer une sauvegarde</button>
+        <button class="ghost danger" data-act="reset">Tout effacer</button></div>
+      <input type="file" id="file" accept=".json,application/json" hidden></div>`;
+}
+
+function reviewView() {
+  const r = ui.review, t = now(), total = r.queue.length, card = data.cards.find((c) => c.id === r.queue[r.i]);
+  const done = r.i >= total || !card;
+  const top = `<div class="rtop"><button class="ghost" data-act="review-quit">✕ Fermer</button>
+    <div class="count">${total === 0 ? 'Révision' : done ? 'Terminé' : `${r.i + 1} / ${total}`}</div><span style="width:90px"></span></div>
+    <div class="progress"><div style="width:${total ? (Math.min(r.i, total) / total) * 100 : 0}%"></div></div>`;
+  if (done) {
+    return `<div class="review">${top}<div class="done"><h2>${total === 0 ? 'Rien à réviser' : 'Séance terminée'}</h2>
+      ${total ? `<p>${r.known} ${plural(r.known, 'réussie', 'réussies')} · ${r.forgot} ${plural(r.forgot, 'oubliée', 'oubliées')}</p>` : ''}
+      <p class="muted">Reviens quand de nouvelles cartes arrivent à échéance.</p>
+      <button class="primary big" data-act="review-quit">Fermer</button></div></div>`;
+  }
+  const hintNo = formatIn(answer(card, false, t).due, t), hintYes = formatIn(answer(card, true, t).due, t);
+  return `<div class="review">${top}
+    <div class="rcard" data-act="flip">${esc(card.front)}${r.flipped ? `<hr>${esc(card.back || '—')}` : ''}</div>
+    ${r.flipped
+      ? `<div class="answers"><button class="no" data-act="no">J’ai oublié <kbd>1</kbd><small>retour à J1 · ${hintNo}</small></button>
+         <button class="yes" data-act="yes">Je savais <kbd>2</kbd><small>${hintYes}</small></button></div>`
+      : `<button class="primary big" data-act="flip">Afficher la réponse <kbd>Espace</kbd></button>`}
+  </div>`;
+}
+
+/* ========== Fenêtres ========== */
+function showModal(html) { $('#modal').innerHTML = `<div class="overlay" data-act="overlay"><div class="modal">${html}</div></div>`; }
+function closeModal() { $('#modal').innerHTML = ''; }
+const modalOpen = () => !!$('#modal').firstChild;
+
+function askText(title, value, okLabel, cb) {
+  showModal(`<h2>${esc(title)}</h2><input id="m-text" autocomplete="off">
+    <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">Annuler</button><button class="primary" data-act="m-ok">${okLabel}</button></div>`);
+  const inp = $('#m-text'); inp.value = value; inp.focus(); inp.select();
+  askText.cb = cb;
+}
+function confirmBox(title, text, okLabel, cb) {
+  showModal(`<h2>${esc(title)}</h2><p class="muted" style="font-size:15px">${esc(text)}</p>
+    <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">Annuler</button><button class="primary" data-act="m-ok">${okLabel}</button></div>`);
+  askText.cb = cb;
+}
+function cardModal(cardId, deckId) {
+  const c = cardId ? data.cards.find((x) => x.id === cardId) : null;
+  const dId = c ? c.deckId : deckId || (data.decks[0] && data.decks[0].id);
+  const t = now();
+  const prog = c ? (isNew(c) ? 'Carte neuve : pas encore révisée.' : isDue(c, t) ? `À réviser maintenant (${c.step} ${plural(c.step, 'révision faite', 'révisions faites')}).` : `Prochaine révision ${formatIn(c.due, t)} · semaine ${weekFor(c.step)}.`) : '';
+  showModal(`<h2>${c ? 'Modifier la carte' : 'Nouvelle carte'}</h2>
+    <label>Deck</label><select id="m-deck">${data.decks.map((d) => `<option value="${d.id}" ${d.id === dId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
+    <label>Recto</label><textarea id="m-front" placeholder="Question, mot, formule…"></textarea>
+    <label>Verso</label><textarea id="m-back" placeholder="Réponse"></textarea>
+    ${prog ? `<p class="muted" style="margin:12px 0 0">${prog}</p>` : ''}
+    <div class="actions">${c ? '<button class="ghost danger" data-act="card-del">Supprimer</button>' : ''}<span class="sp"></span>
+      <button class="ghost" data-act="close">Annuler</button>
+      ${c ? '' : '<button class="ghost" data-act="card-save-more">Enregistrer + suivante</button>'}
+      <button class="primary" data-act="card-save">Enregistrer</button></div>
+    <p class="muted" style="margin:12px 0 0;font-size:12px"><kbd>Ctrl</kbd>+<kbd>Entrée</kbd> enregistre${c ? '' : ' et passe à la suivante'} · <kbd>Échap</kbd> ferme</p>`);
+  $('#m-front').value = c ? c.front : ''; $('#m-back').value = c ? c.back : '';
+  cardModal.id = cardId || null; $('#m-front').focus();
+}
+function saveCard(more) {
+  const front = $('#m-front').value.trim(), back = $('#m-back').value.trim(), deckId = $('#m-deck').value;
+  if (!front) { $('#m-front').focus(); return; }
+  const t = now();
+  if (cardModal.id) data.cards = data.cards.map((c) => (c.id === cardModal.id ? { ...c, front, back, deckId } : c));
+  else data.cards.push({ id: uid(), deckId, front, back, createdAt: t, step: 0, startDay: null, due: null, lastReview: null });
+  data.decks = data.decks.map((d) => (d.id === deckId ? { ...d, updatedAt: t } : d));
+  save();
+  if (more && !cardModal.id) { cardModal(null, deckId); render(); } else { closeModal(); render(); }
+}
+
+/* ========== Actions ========== */
+function startReview(deckId) {
+  ui.review = { queue: queueFor(deckId), i: 0, flipped: false, known: 0, forgot: 0 };
+  render(); window.scrollTo(0, 0);
+}
+function reply(knew) {
+  const r = ui.review, id = r.queue[r.i], t = now();
+  data.cards = data.cards.map((c) => (c.id === id ? answer(c, knew, t) : c));
+  data.log.push({ t, cardId: id, knew }); if (data.log.length > 5000) data.log = data.log.slice(-5000);
+  save();
+  r.known += knew ? 1 : 0; r.forgot += knew ? 0 : 1; r.i++; r.flipped = false; render();
+}
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act, id = el.dataset.id;
+  if (act === 'overlay') { if (e.target === el) closeModal(); return; }
+  switch (act) {
+    case 'tab': setView(id); break;
+    case 'deck-open': setView('deck', id); break;
+    case 'deck-new':
+      askText('Nouveau deck', 'Mon deck', 'Créer', (name) => {
+        const t = now(); const d = { id: uid(), name: name.trim() || 'Mon deck', createdAt: t, updatedAt: t };
+        data.decks.push(d); save(); closeModal(); setView('deck', d.id);
+      }); break;
+    case 'deck-rename': {
+      const d = data.decks.find((x) => x.id === ui.deckId);
+      askText('Renommer le deck', d.name, 'Renommer', (name) => {
+        if (name.trim()) { d.name = name.trim(); d.updatedAt = now(); save(); }
+        closeModal(); render();
+      }); break; }
+    case 'deck-del': {
+      const d = data.decks.find((x) => x.id === ui.deckId), n = data.cards.filter((c) => c.deckId === d.id).length;
+      confirmBox('Supprimer ce deck ?', `Le deck « ${d.name} » et ses ${n} cartes seront supprimés.`, 'Supprimer', () => {
+        data.decks = data.decks.filter((x) => x.id !== d.id); data.cards = data.cards.filter((c) => c.deckId !== d.id);
+        save(); closeModal(); setView('home');
+      }); break; }
+    case 'chart': ui.chartMode = id; render(); break;
+    case 'card-new':
+      if (!data.decks.length) { confirmBox('Aucun deck', 'Crée d’abord un deck pour y ajouter des cartes.', 'OK', closeModal); break; }
+      cardModal(null, ui.deckId); break;
+    case 'card-edit': cardModal(id); break;
+    case 'card-save': saveCard(false); break;
+    case 'card-save-more': saveCard(true); break;
+    case 'card-del':
+      confirmBox('Supprimer cette carte ?', 'Cette action est définitive.', 'Supprimer', () => {
+        data.cards = data.cards.filter((c) => c.id !== cardModal.id); save(); closeModal(); render();
+      }); break;
+    case 'm-ok': { const inp = $('#m-text'); askText.cb && askText.cb(inp ? inp.value : ''); break; }
+    case 'close': closeModal(); break;
+    case 'review-start': startReview(id || null); break;
+    case 'review-quit': ui.review = null; render(); break;
+    case 'flip': if (ui.review) { ui.review.flipped = !ui.review.flipped; render(); } break;
+    case 'yes': reply(true); break;
+    case 'no': reply(false); break;
+    case 'export': {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+      a.download = `revision-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`; a.click(); break; }
+    case 'import': $('#file').click(); break;
+    case 'reset':
+      confirmBox('Tout effacer ?', 'Tous les decks, cartes et statistiques seront supprimés de ce navigateur.', 'Tout effacer', () => {
+        data = blank(); save(); closeModal(); setView('home');
+      }); break;
+  }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'q') { ui.q = e.target.value; $('#list').innerHTML = homeList(); }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id !== 'file' || !e.target.files[0]) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const d = JSON.parse(rd.result);
+      if (!Array.isArray(d.decks) || !Array.isArray(d.cards)) throw new Error();
+      confirmBox('Importer cette sauvegarde ?', `${d.decks.length} decks et ${d.cards.length} cartes. Les données actuelles seront remplacées.`, 'Importer', () => {
+        data = { ...blank(), ...d }; save(); closeModal(); setView('home');
+      });
+    } catch (err) { confirmBox('Fichier invalide', 'Ce fichier n’est pas une sauvegarde de Révision.', 'OK', closeModal); }
+  };
+  rd.readAsText(e.target.files[0]);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (modalOpen()) {
+    if (e.key === 'Escape') closeModal();
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && $('#m-front')) saveCard(!cardModal.id);
+    else if (e.key === 'Enter' && $('#m-text') && e.target.id === 'm-text') { e.preventDefault(); askText.cb && askText.cb($('#m-text').value); }
+    return;
+  }
+  const r = ui.review;
+  if (!r) return;
+  if (e.key === 'Escape') { ui.review = null; render(); return; }
+  const done = r.i >= r.queue.length;
+  if (done) { if (e.key === 'Enter' || e.key === ' ') { ui.review = null; render(); } return; }
+  if (!r.flipped) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); r.flipped = true; render(); } }
+  else if (e.key === '1' || e.key === 'ArrowLeft') reply(false);
+  else if (e.key === '2' || e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); reply(true); }
+});
+
+setInterval(() => { if (!ui.review && !modalOpen() && document.activeElement.id !== 'q') render(); }, 60000);
+render();
+</script>
+</body>
+</html>
