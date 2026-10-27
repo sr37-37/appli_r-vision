@@ -149,8 +149,13 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
 .done { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap: 8px; }
 .done h2 { font-size: 30px; margin: 0; }
 
+.lab { display:block; color: var(--t3); font-size: 12px; font-weight: 700; letter-spacing:.05em; text-transform: uppercase; margin: 10px 0 5px; }
+.inp { width:100%; background: var(--bg1); border:1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
+.err { color: var(--t1); font-weight: 600; margin: 12px 0 0; }
+.syncstat { color: var(--t3); font-size: 13px; margin-right: 8px; white-space: nowrap; }
 @media (max-width: 560px) {
   header .logo { display:none; }
+  .syncstat { display:none; }
   .badges { width: 100px; }
 }
 </style>
@@ -186,12 +191,12 @@ const isDue = (c, n) => !c.done && c.due != null && c.due <= n;
 function answer(c, knew, now) {
   if (!knew) {                                    // oubli : retour à J1
     const s = sod(now);
-    return { ...c, done: false, step: 1, startDay: s, due: dueFor(1, s, now), lastReview: now };
+    return { ...c, done: false, step: 1, startDay: s, due: dueFor(1, s, now), lastReview: now, u: now };
   }
   const s = c.startDay == null ? sod(now) : c.startDay;
   const step = c.step + 1;
-  if (step >= TOTAL) return { ...c, step, startDay: s, due: null, done: true, lastReview: now };   // terminée
-  return { ...c, step, startDay: s, due: dueFor(step, s, now), lastReview: now };
+  if (step >= TOTAL) return { ...c, step, startDay: s, due: null, done: true, lastReview: now, u: now };   // terminée
+  return { ...c, step, startDay: s, due: dueFor(step, s, now), lastReview: now, u: now };
 }
 function formatIn(ts, now) {
   const diff = ts - now;
@@ -216,13 +221,35 @@ function planLabels(n) {
 
 /* ========== Données (sauvegardées dans le navigateur) ========== */
 const KEY = 'revision-app/v1';
-const blank = () => ({ decks: [], cards: [], log: [] });
+const blank = () => ({ decks: [], cards: [], log: [], tomb: {} });
 let data = load();
 function load() {
-  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d) return { ...blank(), ...d }; } catch (e) {}
-  return blank();
+  let d = blank();
+  try { const x = JSON.parse(localStorage.getItem(KEY)); if (x) d = { ...d, ...x }; } catch (e) {}
+  return migrate(d);
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+// "u" = date de dernière modification d'un deck ou d'une carte (sert à la synchronisation : le plus récent gagne).
+// "tomb" = éléments supprimés, gardés en mémoire pour que la suppression se propage aux autres appareils.
+function migrate(d) {
+  const t = Date.now();
+  if (!d.tomb) d.tomb = {};
+  d.decks.forEach((x) => { if (!x.u) x.u = x.updatedAt || x.createdAt || t; });
+  d.cards.forEach((x) => { if (!x.u) x.u = x.lastReview || x.createdAt || t; });
+  d.log.forEach((l) => { if (!l.id) l.id = 'l_' + l.t + '_' + l.cardId; });
+  return d;
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} scheduleSync(); }
+function tombstone(kind, id) { data.tomb[id] = { kind, u: Date.now() }; }
+// Remplace toutes les données (import, effacement) en laissant des tombes pour ce qui disparaît.
+function replaceAll(next) {
+  next = migrate(next);
+  const t = Date.now(), keep = new Set([...next.decks, ...next.cards, ...next.log].map((x) => x.id)), tomb = {};
+  const mark = (kind, list) => list.forEach((x) => { if (!keep.has(x.id)) tomb[x.id] = { kind, u: t }; });
+  mark('deck', data.decks); mark('card', data.cards); mark('log', data.log);
+  for (const [id, v] of Object.entries(data.tomb)) if (!keep.has(id) && !tomb[id]) tomb[id] = v;
+  next.decks.forEach((x) => (x.u = t)); next.cards.forEach((x) => (x.u = t));
+  next.tomb = tomb; data = next; save();
+}
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const now = () => Date.now();
 
@@ -280,6 +307,7 @@ function render() {
       ${tab('review', 'Révision', due ? `<span class="badge">${due}</span>` : '')}
       ${tab('plan', 'Plan & données')}
       <span class="sp"></span>
+      <span class="syncstat" id="syncstat">${syncLabel()}</span>
       ${ui.tab === 'home' ? '<button class="primary" data-act="deck-new">+ Nouveau deck</button>' : ''}
     </header>
     <main>${ui.tab === 'home' ? homeView() : ui.tab === 'deck' ? deckView() : ui.tab === 'folder' ? folderView() : ui.tab === 'stats' ? statsView() : ui.tab === 'review' ? reviewTabView() : planView()}</main>`;
@@ -407,8 +435,10 @@ function planView() {
     <div class="box"><p style="margin:0">Chaque carte suit la courbe d’Ebbinghaus : des rappels rapprochés la première semaine, puis des révisions de plus en plus espacées (semaines 3, 5, 8, 12, 16). Après la semaine 16, la carte est terminée ; quand toutes les cartes d’un deck sont terminées, le deck passe dans le dossier « ${FOLDER} ».</p>
       <div class="chips">${labels.map((l) => `<span class="chip">${l}</span>`).join('')}<span class="chip dim">✓ Terminée</span></div>
       <p class="muted" style="margin:0">J1 compte deux révisions (la seconde environ 3 h après la première). Pas de révision les J4 et J6. Une carte oubliée recommence à J1.</p></div>
+    <h2 class="sub">Synchronisation</h2>
+    <div class="box" id="syncbox">${syncBox()}</div>
     <h2 class="sub">Mes données</h2>
-    <div class="box"><p class="muted" style="margin:0 0 6px">Tout est enregistré dans ce navigateur, sur cet ordinateur. Fais une sauvegarde de temps en temps (et avant de vider les données du navigateur).</p>
+    <div class="box"><p class="muted" style="margin:0 0 6px">Tes cartes sont enregistrées dans ce navigateur (et envoyées à ton compte si tu es connecté plus haut). Fais une sauvegarde de temps en temps, surtout si tu n’utilises pas la synchronisation.</p>
       <div class="btnrow"><button class="ghost" data-act="export">⬇ Exporter une sauvegarde</button>
         <button class="ghost" data-act="import">⬆ Importer une sauvegarde</button>
         <button class="ghost danger" data-act="reset">Tout effacer</button></div>
@@ -475,9 +505,9 @@ function saveCard(more) {
   const front = $('#m-front').value.trim(), back = $('#m-back').value.trim(), deckId = $('#m-deck').value;
   if (!front) { $('#m-front').focus(); return; }
   const t = now();
-  if (cardModal.id) data.cards = data.cards.map((c) => (c.id === cardModal.id ? { ...c, front, back, deckId } : c));
-  else data.cards.push({ id: uid(), deckId, front, back, createdAt: t, step: 0, startDay: null, due: null, lastReview: null });
-  data.decks = data.decks.map((d) => (d.id === deckId ? { ...d, updatedAt: t } : d));
+  if (cardModal.id) data.cards = data.cards.map((c) => (c.id === cardModal.id ? { ...c, front, back, deckId, u: t } : c));
+  else data.cards.push({ id: uid(), deckId, front, back, createdAt: t, step: 0, startDay: null, due: null, lastReview: null, u: t });
+  data.decks = data.decks.map((d) => (d.id === deckId ? { ...d, updatedAt: t, u: t } : d));
   save();
   if (more && !cardModal.id) { cardModal(null, deckId); render(); } else { closeModal(); render(); }
 }
@@ -490,7 +520,7 @@ function startReview(deckId) {
 function reply(knew) {
   const r = ui.review, id = r.queue[r.i], t = now();
   data.cards = data.cards.map((c) => (c.id === id ? answer(c, knew, t) : c));
-  data.log.push({ t, cardId: id, knew }); if (data.log.length > 5000) data.log = data.log.slice(-5000);
+  data.log.push({ id: 'l_' + t + '_' + id, t, cardId: id, knew }); if (data.log.length > 5000) data.log = data.log.slice(-5000);
   save();
   r.known += knew ? 1 : 0; r.forgot += knew ? 0 : 1; r.i++; r.flipped = false; render();
 }
@@ -506,21 +536,27 @@ document.addEventListener('click', (e) => {
     case 'folder-open': setView('folder'); break;
     case 'deck-new':
       askText('Nouveau deck', 'Mon deck', 'Créer', (name) => {
-        const t = now(); const d = { id: uid(), name: name.trim() || 'Mon deck', createdAt: t, updatedAt: t };
+        const t = now(); const d = { id: uid(), name: name.trim() || 'Mon deck', createdAt: t, updatedAt: t, u: t };
         data.decks.push(d); save(); closeModal(); setView('deck', d.id);
       }); break;
     case 'deck-rename': {
       const d = data.decks.find((x) => x.id === ui.deckId);
       askText('Renommer le deck', d.name, 'Renommer', (name) => {
-        if (name.trim()) { d.name = name.trim(); d.updatedAt = now(); save(); }
+        if (name.trim()) { d.name = name.trim(); d.updatedAt = d.u = now(); save(); }
         closeModal(); render();
       }); break; }
     case 'deck-del': {
       const d = data.decks.find((x) => x.id === ui.deckId), n = data.cards.filter((c) => c.deckId === d.id).length;
       confirmBox('Supprimer ce deck ?', `Le deck « ${d.name} » et ses ${n} cartes seront supprimés.`, 'Supprimer', () => {
+        data.cards.filter((c) => c.deckId === d.id).forEach((c) => tombstone('card', c.id)); tombstone('deck', d.id);
         data.decks = data.decks.filter((x) => x.id !== d.id); data.cards = data.cards.filter((c) => c.deckId !== d.id);
         save(); closeModal(); setView('home');
       }); break; }
+    case 'sync-login': doAuth('login'); break;
+    case 'sync-signup': doAuth('signup'); break;
+    case 'sync-reset': doReset(); break;
+    case 'sync-now': syncNow(); break;
+    case 'sync-logout': if (remote) remote.signOut(); break;
     case 'chart': ui.chartMode = id; render(); break;
     case 'card-new':
       if (!data.decks.length) { confirmBox('Aucun deck', 'Crée d’abord un deck pour y ajouter des cartes.', 'OK', closeModal); break; }
@@ -530,7 +566,7 @@ document.addEventListener('click', (e) => {
     case 'card-save-more': saveCard(true); break;
     case 'card-del':
       confirmBox('Supprimer cette carte ?', 'Cette action est définitive.', 'Supprimer', () => {
-        data.cards = data.cards.filter((c) => c.id !== cardModal.id); save(); closeModal(); render();
+        tombstone('card', cardModal.id); data.cards = data.cards.filter((c) => c.id !== cardModal.id); save(); closeModal(); render();
       }); break;
     case 'm-ok': { const inp = $('#m-text'); askText.cb && askText.cb(inp ? inp.value : ''); break; }
     case 'close': closeModal(); break;
@@ -545,8 +581,8 @@ document.addEventListener('click', (e) => {
       a.download = `revision-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`; a.click(); break; }
     case 'import': $('#file').click(); break;
     case 'reset':
-      confirmBox('Tout effacer ?', 'Tous les decks, cartes et statistiques seront supprimés de ce navigateur.', 'Tout effacer', () => {
-        data = blank(); save(); closeModal(); setView('home');
+      confirmBox('Tout effacer ?', syncUser ? 'Tous les decks, cartes et statistiques seront supprimés ici ET sur tous tes appareils connectés au compte.' : 'Tous les decks, cartes et statistiques seront supprimés de ce navigateur.', 'Tout effacer', () => {
+        replaceAll(blank()); closeModal(); setView('home');
       }); break;
   }
 });
@@ -561,8 +597,8 @@ document.addEventListener('change', (e) => {
     try {
       const d = JSON.parse(rd.result);
       if (!Array.isArray(d.decks) || !Array.isArray(d.cards)) throw new Error();
-      confirmBox('Importer cette sauvegarde ?', `${d.decks.length} decks et ${d.cards.length} cartes. Les données actuelles seront remplacées.`, 'Importer', () => {
-        data = { ...blank(), ...d }; save(); closeModal(); setView('home');
+      confirmBox('Importer cette sauvegarde ?', `${d.decks.length} decks et ${d.cards.length} cartes. Les données actuelles seront remplacées${syncUser ? ' (sur tous tes appareils connectés)' : ''}.`, 'Importer', () => {
+        replaceAll({ ...blank(), ...d }); closeModal(); setView('home');
       });
     } catch (err) { confirmBox('Fichier invalide', 'Ce fichier n’est pas une sauvegarde de Révision.', 'OK', closeModal); }
   };
@@ -570,6 +606,7 @@ document.addEventListener('change', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.target.id === 's-pass' || e.target.id === 's-email')) { e.preventDefault(); doAuth('login'); return; }
   if (modalOpen()) {
     if (e.key === 'Escape') closeModal();
     else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && $('#m-front')) saveCard(!cardModal.id);
@@ -591,8 +628,188 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 
-setInterval(() => { if (!ui.review && !modalOpen() && document.activeElement.id !== 'q') render(); }, 60000);
+
+/* ========== Synchronisation (facultative) ==========
+   Les cartes restent d'abord dans le navigateur (l'application marche sans internet). Quand tu es connecté à ton
+   compte, les changements sont envoyés puis ceux des autres appareils sont récupérés. Pour chaque deck ou carte,
+   la modification la plus récente gagne. Pour activer : remplir FIREBASE_CONFIG (voir le guide). */
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyAp6sOQoGbM-xpT16INw49nXLQ9XT4J_a4',
+  authDomain: 'revision-e546f.firebaseapp.com',
+  projectId: 'revision-e546f',
+  storageBucket: 'revision-e546f.firebasestorage.app',
+  messagingSenderId: '138646876486',
+  appId: '1:138646876486:web:2c6c94c29e14168820f547',
+};
+const SYNC_KEY = 'revision-app/sync-';
+let remote = null, syncUser = null, syncSt = null, syncStatus = 'idle', syncMsg = '', syncTimer = null, syncing = false, syncAgain = false;
+const syncOn = () => !!(window.__REMOTE_FACTORY__ || FIREBASE_CONFIG.apiKey);
+const typing = () => !!document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+const emptySt = () => ({ seen: {}, cursor: 0, last: 0 });   // seen[id] = dernière version connue du serveur
+function loadSt(uid) { try { return { ...emptySt(), ...JSON.parse(localStorage.getItem(SYNC_KEY + uid)) }; } catch (e) { return emptySt(); } }
+function saveSt() { try { if (syncUser) localStorage.setItem(SYNC_KEY + syncUser.uid, JSON.stringify(syncSt)); } catch (e) {} }
+
+async function firebaseRemote(cfg) {
+  const base = 'https://www.gstatic.com/firebasejs/10.14.1/';
+  const [{ initializeApp }, A, F] = await Promise.all([import(base + 'firebase-app.js'), import(base + 'firebase-auth.js'), import(base + 'firebase-firestore.js')]);
+  const app = initializeApp(cfg), auth = A.getAuth(app), db = F.getFirestore(app);
+  return {
+    onAuth: (cb) => A.onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, email: u.email } : null)),
+    signIn: (e, p) => A.signInWithEmailAndPassword(auth, e, p),
+    signUp: (e, p) => A.createUserWithEmailAndPassword(auth, e, p),
+    reset: (e) => A.sendPasswordResetEmail(auth, e),
+    signOut: () => A.signOut(auth),
+    async push(uid, items) {
+      for (let i = 0; i < items.length; i += 400) {
+        const b = F.writeBatch(db);
+        for (const it of items.slice(i, i + 400)) b.set(F.doc(db, 'users', uid, 'items', it.id), { ...it, s: F.serverTimestamp() });
+        await b.commit();
+      }
+    },
+    async pull(uid, since) {
+      const q = F.query(F.collection(db, 'users', uid, 'items'), F.where('s', '>', F.Timestamp.fromMillis(Math.max(0, since - 5000))));
+      const snap = await F.getDocs(q), items = []; let cursor = since;
+      snap.forEach((d) => { const x = d.data(); if (x.s && x.s.toMillis) cursor = Math.max(cursor, x.s.toMillis()); delete x.s; items.push(x); });
+      return { items, cursor };
+    },
+  };
+}
+
+// Ce qui a changé ici depuis la dernière version connue du serveur.
+function dirtyItems() {
+  const seen = syncSt.seen, out = [];
+  for (const d of data.decks) if (seen[d.id] !== d.u) out.push({ kind: 'deck', ...d });
+  for (const c of data.cards) if (seen[c.id] !== c.u) out.push({ kind: 'card', ...c });
+  for (const [id, t] of Object.entries(data.tomb)) if (seen[id] !== t.u) out.push({ id, kind: t.kind, deleted: true, u: t.u });
+  for (const l of data.log) if (!seen[l.id]) out.push({ kind: 'log', ...l, u: l.t });
+  return JSON.parse(JSON.stringify(out));
+}
+// Intègre ce que les autres appareils ont envoyé (le plus récent gagne).
+function mergeIn(items) {
+  const seen = syncSt.seen; let changed = false;
+  const logIds = new Set(data.log.map((l) => l.id));
+  for (const r of items) {
+    if (r.kind === 'log') {
+      seen[r.id] = r.deleted ? r.u : true;
+      if (r.deleted) {
+        if (logIds.has(r.id)) { data.log = data.log.filter((l) => l.id !== r.id); logIds.delete(r.id); changed = true; }
+        data.tomb[r.id] = { kind: 'log', u: r.u };
+      } else if (!logIds.has(r.id) && !data.tomb[r.id]) {
+        data.log.push({ id: r.id, t: r.t, cardId: r.cardId, knew: r.knew }); logIds.add(r.id); changed = true;
+      }
+      continue;
+    }
+    const list = r.kind === 'deck' ? 'decks' : 'cards';
+    const local = data[list].find((x) => x.id === r.id), tomb = data.tomb[r.id];
+    const localU = local ? local.u : tomb ? tomb.u : -1;
+    seen[r.id] = r.u;
+    if (localU >= r.u) continue;                 // la version d'ici est aussi récente ou plus récente : elle sera renvoyée
+    if (r.deleted) { if (local) data[list] = data[list].filter((x) => x.id !== r.id); data.tomb[r.id] = { kind: r.kind, u: r.u }; }
+    else {
+      const { kind, deleted, ...rest } = r;
+      data[list] = local ? data[list].map((x) => (x.id === r.id ? rest : x)) : [...data[list], rest];
+      delete data.tomb[r.id];
+    }
+    changed = true;
+  }
+  if (changed) { data.log.sort((a, b) => a.t - b.t); if (data.log.length > 5000) data.log = data.log.slice(-5000); }
+  return changed;
+}
+
+async function syncNow() {
+  if (!remote || !syncUser) return;
+  if (syncing) { syncAgain = true; return; }
+  syncing = true; setSync('sync');
+  try {
+    const out = dirtyItems();
+    if (out.length) await remote.push(syncUser.uid, out);
+    for (const it of out) syncSt.seen[it.id] = it.kind === 'log' && !it.deleted ? true : it.u;
+    const { items, cursor } = await remote.pull(syncUser.uid, syncSt.cursor);
+    const changed = mergeIn(items);
+    syncSt.cursor = Math.max(syncSt.cursor, cursor); syncSt.last = Date.now();
+    if (changed) { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} }
+    saveSt(); setSync('ok');
+    if (dirtyItems().length) syncAgain = true;     // une version d'ici plus récente que celle du serveur : on la renvoie aussitôt
+    if (changed && !ui.review && !modalOpen() && !typing()) render();
+  } catch (e) { setSync('err', e); }
+  finally { syncing = false; if (syncAgain) { syncAgain = false; scheduleSync(800); } }
+}
+function scheduleSync(ms = 3000) { if (!remote || !syncUser) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, ms); }
+
+function authMsg(e) {
+  const c = ((e && e.code) || '').replace('firestore/', '');
+  const m = {
+    'auth/invalid-credential': 'Email ou mot de passe incorrect.', 'auth/wrong-password': 'Email ou mot de passe incorrect.',
+    'auth/user-not-found': 'Email ou mot de passe incorrect.', 'auth/invalid-email': 'Adresse email invalide.',
+    'auth/email-already-in-use': 'Un compte existe déjà avec cet email : clique sur « Se connecter ».',
+    'auth/weak-password': 'Mot de passe trop court (6 caractères minimum).',
+    'auth/too-many-requests': 'Trop d’essais : réessaie dans quelques minutes.',
+    'auth/network-request-failed': 'Pas de connexion internet.', 'unavailable': 'Serveur injoignable pour le moment.',
+    'permission-denied': 'Accès refusé par la base : vérifie les règles de sécurité.',
+  };
+  return m[c] || (e && e.message) || 'Erreur inconnue.';
+}
+function syncLabel() { return !syncOn() || !syncUser ? '' : ({ sync: '☁ synchro…', ok: '☁ synchronisé', err: '☁ hors ligne' }[syncStatus] || '☁'); }
+function setSync(state, e) {
+  syncStatus = state; syncMsg = e ? authMsg(e) : '';
+  const el = $('#syncstat'); if (el) el.textContent = syncLabel();
+  refreshBox();
+}
+function refreshBox() { const box = $('#syncbox'); if (box && !typing()) box.innerHTML = syncBox(); }
+function syncBox() {
+  if (!syncOn()) return '<p class="muted" style="margin:0">Synchronisation pas encore activée. Une fois ton compte en ligne créé (voir le guide), tu retrouveras les mêmes cartes sur le téléphone et sur le PC.</p>';
+  if (!remote) return `<p class="muted" style="margin:0">${syncStatus === 'loading' ? 'Chargement…' : 'Synchronisation indisponible pour le moment (hors connexion ?). Elle reprendra automatiquement.'}</p>`;
+  if (!syncUser) return `<p class="muted" style="margin:0 0 6px">Connecte-toi avec le même compte sur tous tes appareils pour retrouver les mêmes cartes. Tes cartes actuelles seront ajoutées à celles du compte.</p>
+    <label class="lab" for="s-email">Email</label><input class="inp" id="s-email" type="email" autocomplete="email">
+    <label class="lab" for="s-pass">Mot de passe (6 caractères minimum)</label><input class="inp" id="s-pass" type="password" autocomplete="current-password">
+    <div class="btnrow"><button class="primary" data-act="sync-login">Se connecter</button><button class="ghost" data-act="sync-signup">Créer un compte</button><button class="link" data-act="sync-reset">Mot de passe oublié</button></div>
+    ${syncMsg ? `<p class="err">${esc(syncMsg)}</p>` : ''}`;
+  const last = syncSt && syncSt.last ? `Dernière synchronisation : il y a ${formatAgo(syncSt.last, now())}.` : 'Pas encore synchronisé.';
+  return `<p style="margin:0">Connecté : <b>${esc(syncUser.email || '')}</b></p>
+    <p class="muted" style="margin:6px 0 0">${syncStatus === 'err' ? '⚠ ' + esc(syncMsg || 'Synchronisation impossible pour le moment.') : syncStatus === 'sync' ? 'Synchronisation en cours…' : last}</p>
+    <div class="btnrow"><button class="primary" data-act="sync-now">Synchroniser maintenant</button><button class="ghost" data-act="sync-logout">Se déconnecter</button></div>`;
+}
+async function doAuth(kind) {
+  const email = (($('#s-email') || {}).value || '').trim(), pass = ($('#s-pass') || {}).value || '';
+  if (!remote) return;
+  if (!email || !pass) { syncMsg = 'Entre ton email et ton mot de passe.'; return refreshBoxForce(); }
+  syncMsg = 'Connexion…'; refreshBoxForce();
+  try { await (kind === 'signup' ? remote.signUp(email, pass) : remote.signIn(email, pass)); }
+  catch (e) { syncMsg = authMsg(e); refreshBoxForce(); }
+}
+async function doReset() {
+  const email = (($('#s-email') || {}).value || '').trim();
+  if (!remote) return;
+  if (!email) { syncMsg = 'Entre ton email, puis clique sur « Mot de passe oublié ».'; return refreshBoxForce(); }
+  try { await remote.reset(email); syncMsg = 'Email de réinitialisation envoyé (pense à regarder les courriers indésirables).'; }
+  catch (e) { syncMsg = authMsg(e); }
+  refreshBoxForce();
+}
+// Réaffiche la zone de connexion en gardant ce que l'utilisateur a tapé.
+function refreshBoxForce() {
+  const box = $('#syncbox'); if (!box) return;
+  const e = ($('#s-email') || {}).value || '', p = ($('#s-pass') || {}).value || '';
+  box.innerHTML = syncBox();
+  if ($('#s-email')) $('#s-email').value = e; if ($('#s-pass')) $('#s-pass').value = p;
+}
+function onAuth(u) {
+  syncUser = u; syncMsg = '';
+  if (u) { syncSt = loadSt(u.uid); setSync('sync'); syncNow(); } else { syncSt = null; setSync('idle'); }
+  if (!ui.review && !modalOpen()) render();
+}
+async function initSync() {
+  if (!syncOn() || remote) return;
+  try { syncStatus = 'loading'; remote = await (window.__REMOTE_FACTORY__ || firebaseRemote)(FIREBASE_CONFIG); remote.onAuth(onAuth); }
+  catch (e) { remote = null; syncStatus = 'err'; }
+  refreshBox();
+}
+window.addEventListener('online', () => (remote ? scheduleSync(500) : initSync()));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') (remote ? scheduleSync(300) : initSync()); });
+setInterval(() => scheduleSync(0), 5 * 60 * 1000);
+
+setInterval(() => { if (!ui.review && !modalOpen() && !typing()) render(); }, 60000);
 render();
+initSync();
 </script>
 </body>
 </html>
