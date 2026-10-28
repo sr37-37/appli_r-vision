@@ -200,16 +200,18 @@ const dueFor = (i, start, now) => (offsetFor(i) === 0 ? now + GAP : addDays(star
 const isNew = (c) => !c.done && c.due == null;
 const isDue = (c, n) => !c.done && c.due != null && c.due <= n;
 function answer(c, knew, now) {
-  if (!knew) {                                    // oubli : la révision n'est pas comptée, la carte garde son étape et revient demain
-    return { ...c, due: addDays(sod(now), 1), retry: true, lastReview: now, u: now };
+  if (!knew && c.step >= WEEK1.length && !c.done) {   // après la semaine 1 : la carte reste à son stade et revient demain
+    const tomorrow = addDays(sod(now), 1);
+    return { ...c, startDay: addDays(tomorrow, -offsetFor(c.step)), due: tomorrow, lastReview: now, u: now };
+  }
+  if (!knew) {                                    // oubli pendant la semaine 1 : retour à J1
+    const s = sod(now);
+    return { ...c, done: false, step: 1, startDay: s, due: dueFor(1, s, now), lastReview: now, u: now };
   }
   const s = c.startDay == null ? sod(now) : c.startDay;
   const step = c.step + 1;
-  if (step >= TOTAL) return { ...c, step, startDay: s, due: null, done: true, retry: false, lastReview: now, u: now };   // terminée
-  let due = dueFor(step, s, now);
-  // Après un oubli, le calendrier reste celui de départ, mais on évite de redonner la carte le jour même d'une révision réussie.
-  if (c.retry && offsetFor(step) !== 0) due = Math.max(due, addDays(sod(now), 1));
-  return { ...c, step, startDay: s, due, retry: false, lastReview: now, u: now };
+  if (step >= TOTAL) return { ...c, step, startDay: s, due: null, done: true, lastReview: now, u: now };   // terminée
+  return { ...c, step, startDay: s, due: dueFor(step, s, now), lastReview: now, u: now };
 }
 function formatIn(ts, now) {
   const diff = ts - now;
@@ -525,7 +527,7 @@ function planView() {
   return `<h1 style="margin:0 0 6px">Plan de révision</h1>
     <div class="box"><p style="margin:0">Chaque carte suit la courbe d’Ebbinghaus : des rappels rapprochés la première semaine, puis des révisions de plus en plus espacées (semaines 3, 5, 8, 12, 16). Après la semaine 16, la carte est terminée ; quand toutes les cartes d’un deck sont terminées, le deck passe dans le dossier « ${FOLDER} ».</p>
       <div class="chips">${labels.map((l) => `<span class="chip">${l}</span>`).join('')}<span class="chip dim">✓ Terminée</span></div>
-      <p class="muted" style="margin:0">J1 compte deux révisions (la seconde environ 3 h après la première). Pas de révision les J4 et J6. Une carte oubliée ne compte pas : elle garde son étape et revient le lendemain.</p></div>
+      <p class="muted" style="margin:0">J1 compte deux révisions (la seconde environ 3 h après la première). Pas de révision les J4 et J6. Pendant la semaine 1, une carte oubliée recommence à J1 ; ensuite elle reste à son stade et revient le lendemain jusqu’à être réussie.</p></div>
     <h2 class="sub">Synchronisation</h2>
     <div class="box" id="syncbox">${syncBox()}</div>
     <h2 class="sub">Mes données</h2>
@@ -552,7 +554,7 @@ function reviewView() {
   return `<div class="review">${top}
     <div class="rcard" data-act="flip">${esc(card.front)}${r.flipped ? `<hr>${esc(card.back || '—')}` : ''}</div>
     ${r.flipped
-      ? `<div class="answers"><button class="no" data-act="no">J’ai oublié <kbd>1</kbd><small>non comptée · revient ${hintNo}</small></button>
+      ? `<div class="answers"><button class="no" data-act="no">J’ai oublié <kbd>1</kbd><small>${card.step >= WEEK1.length ? 'reste au même stade' : 'retour à J1'} · ${hintNo}</small></button>
          <button class="yes" data-act="yes">Je savais <kbd>2</kbd><small>${hintYes}</small></button></div>`
       : `<button class="primary big" data-act="flip">Afficher la réponse <kbd>Espace</kbd></button>`}
   </div>`;
@@ -578,7 +580,7 @@ function cardModal(cardId, deckId) {
   const c = cardId ? data.cards.find((x) => x.id === cardId) : null;
   const dId = c ? c.deckId : deckId || (data.decks[0] && data.decks[0].id);
   const t = now();
-  const prog = c ? (c.done ? 'Carte terminée : calendrier fini (semaine 16 passée), elle ne revient plus.' : isNew(c) ? 'Carte neuve : pas encore révisée.' : isDue(c, t) ? `À réviser maintenant (${c.step} ${plural(c.step, 'révision faite', 'révisions faites')}).` : `${c.retry ? 'Oubliée : à refaire ' : 'Prochaine révision '}${formatIn(c.due, t)} · semaine ${weekFor(c.step)}.`) : '';
+  const prog = c ? (c.done ? 'Carte terminée : calendrier fini (semaine 16 passée), elle ne revient plus.' : isNew(c) ? 'Carte neuve : pas encore révisée.' : isDue(c, t) ? `À réviser maintenant (${c.step} ${plural(c.step, 'révision faite', 'révisions faites')}).` : `Prochaine révision ${formatIn(c.due, t)} · semaine ${weekFor(c.step)}.`) : '';
   showModal(`<h2>${c ? 'Modifier la carte' : 'Nouvelle carte'}</h2>
     <label>Deck</label><select id="m-deck">${data.decks.map((d) => `<option value="${d.id}" ${d.id === dId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
     <label>Recto</label><textarea id="m-front" placeholder="Question, mot, formule…"></textarea>
