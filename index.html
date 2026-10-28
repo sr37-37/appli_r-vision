@@ -246,6 +246,17 @@ function load() {
 }
 // "u" = date de dernière modification d'un deck ou d'une carte (sert à la synchronisation : le plus récent gagne).
 // "tomb" = éléments supprimés, gardés en mémoire pour que la suppression se propage aux autres appareils.
+// Un deck rangé dans un sous-dossier n'apparaît plus dans le dossier parent (il n'est que dans le sous-dossier).
+function normalizeFolders(d) {
+  let changed = false; const t = Date.now();
+  for (const f of d.folders) {
+    const parent = f.parentId && d.folders.find((x) => x.id === f.parentId);
+    if (!parent || !f.deckIds.length) continue;
+    const keep = parent.deckIds.filter((id) => !f.deckIds.includes(id));
+    if (keep.length !== parent.deckIds.length) { parent.deckIds = keep; parent.u = t; changed = true; }
+  }
+  return changed;
+}
 function migrate(d) {
   const t = Date.now();
   if (!d.tomb) d.tomb = {};
@@ -255,6 +266,7 @@ function migrate(d) {
   d.decks.forEach((x) => { if (!x.u) x.u = x.updatedAt || x.createdAt || t; });
   d.cards.forEach((x) => { if (!x.u) x.u = x.lastReview || x.createdAt || t; });
   d.log.forEach((l) => { if (!l.id) l.id = 'l_' + l.t + '_' + l.cardId; });
+  normalizeFolders(d);
   return d;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} scheduleSync(); }
@@ -452,17 +464,25 @@ function createFolder(name, parentId) {
   data.folders.push(f); save(); return f;
 }
 // Retirer un deck d'un dossier le retire aussi de tous ses sous-dossiers.
-function removeFromFolder(fid, deckId) { setFolders([fid, ...descendants(fid)], (f) => ({ deckIds: f.deckIds.filter((x) => x !== deckId) })); save(); }
+// Retirer un deck d'un sous-dossier le remet dans le dossier parent ; le retirer d'un dossier de premier niveau le sort du dossier.
+function removeFromFolder(fid, deckId) {
+  const parent = fById(fid) && fById(fid).parentId && fById(fById(fid).parentId);
+  setFolders([fid, ...descendants(fid)], (f) => ({ deckIds: f.deckIds.filter((x) => x !== deckId) }));
+  if (parent && !parent.deckIds.includes(deckId)) setFolders([parent.id], (g) => ({ deckIds: [...g.deckIds, deckId] }));
+  save();
+}
 function untrackDeck(deckId) { setFolders(data.folders.filter((f) => f.deckIds.includes(deckId)).map((f) => f.id), (f) => ({ deckIds: f.deckIds.filter((x) => x !== deckId) })); }
 function deleteFolder(id) {
   const gone = new Set([id, ...descendants(id)]);
+  const parent = fById(id) && fById(id).parentId && fById(fById(id).parentId);
+  if (parent) { const back = [...folderDeckSet(id)].filter((d) => !parent.deckIds.includes(d)); if (back.length) setFolders([parent.id], (g) => ({ deckIds: [...g.deckIds, ...back] })); }   // les decks reviennent dans le dossier parent
   gone.forEach((x) => tombstone('folder', x));
   data.folders = data.folders.filter((f) => !gone.has(f.id)); save();
 }
 function openFolder(id) { ui.folderId = id; touchRecent('folders', id); setView('ufolder'); }
 
 function folderRow(f) {
-  const decks = folderDecks(f), due = decks.reduce((n, d) => n + stats(d.id).due, 0), ns = kids(f.id).length;
+  const all = [...folderDeckSet(f.id)], decks = all, due = all.reduce((n, id) => n + stats(id).due, 0), ns = kids(f.id).length;
   return `<div class="row" data-act="ufolder-open" data-id="${f.id}"><div class="rowmain"><div class="name">${folderIcon}${esc(f.name)}</div>
     <div class="meta">${decks.length} ${plural(decks.length, 'deck', 'decks')}${ns ? ` · ${ns} ${plural(ns, 'sous-dossier', 'sous-dossiers')}` : ''}</div></div>
     <div class="badges"><div class="d ${due ? 'on' : ''}">${due} À FAIRE</div></div>
@@ -708,7 +728,11 @@ document.addEventListener('click', (e) => {
     case 'folder-add-ok': {
       const f = fById(id), allowed = new Set(addableDecks(f).map((d) => d.id));
       const ids = [...document.querySelectorAll('.cb-deck:checked')].map((x) => x.value).filter((x) => allowed.has(x));
-      if (ids.length) { setFolders([id], (g) => ({ deckIds: [...g.deckIds, ...ids] })); save(); }
+      if (ids.length) {
+        setFolders([id], (g) => ({ deckIds: [...g.deckIds, ...ids] }));
+        if (f.parentId) setFolders([f.parentId], (g) => ({ deckIds: g.deckIds.filter((x) => !ids.includes(x)) }));   // le deck quitte le dossier parent
+        save();
+      }
       closeModal(); render(); break; }
     case 'folder-review': startReview(null, folderDeckSet(id)); break;
     case 'folder-remove': removeFromFolder(el.dataset.f, id); render(); break;
@@ -893,6 +917,7 @@ function mergeIn(items) {
     }
     changed = true;
   }
+  if (changed && normalizeFolders(data)) changed = true;
   if (changed) { data.log.sort((a, b) => a.t - b.t); if (data.log.length > 5000) data.log = data.log.slice(-5000); }
   return changed;
 }
