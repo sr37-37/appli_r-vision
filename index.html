@@ -149,6 +149,7 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
 .done { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap: 8px; }
 .done h2 { font-size: 30px; margin: 0; }
 
+.sep { border: 0; border-top: 1px solid var(--line); margin: 26px 0 4px; }
 .section.flex { display:flex; justify-content:space-between; align-items:center; }
 .mini { background: var(--bg4); color: var(--t1); border-radius: 8px; padding: 3px 10px; font-size: 12px; font-weight: 700; letter-spacing: 0; }
 .mini:hover { background: var(--accentDim); color: var(--onAccent); }
@@ -312,27 +313,38 @@ function chart(items) {
 }
 
 /* ========== État de l'interface ========== */
-const ui = { tab: 'home', deckId: null, folderId: null, q: '', chartMode: 'dist', review: null };
+const ui = { tab: 'home', deckId: null, folderId: null, q: '', fq: '', cq: '', chartMode: 'dist', review: null };
 
-function setView(tab, deckId = null) { ui.tab = tab; ui.deckId = deckId; ui.review = null; render(); window.scrollTo(0, 0); }
+// Derniers decks / dossiers consultés (propres à cet appareil, non synchronisés).
+const RECENT_KEY = 'revision-app/recent';
+const AUTO_ID = '__auto';
+let recent = (() => { try { const r = JSON.parse(localStorage.getItem(RECENT_KEY)); return { decks: r.decks || [], folders: r.folders || [] }; } catch (e) { return { decks: [], folders: [] }; } })();
+function touchRecent(kind, id) {
+  if (!id) return;
+  recent[kind] = [id, ...recent[kind].filter((x) => x !== id)].slice(0, 20);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch (e) {}
+}
+function setView(tab, deckId = null) {
+  if (tab === 'deck') touchRecent('decks', deckId);
+  if (tab === 'folder') touchRecent('folders', AUTO_ID); ui.tab = tab; if (deckId !== ui.deckId) ui.cq = ''; ui.deckId = deckId; ui.review = null; render(); window.scrollTo(0, 0); }
 
 /* ========== Rendu ========== */
 function render() {
   const root = $('#app');
   if (ui.review) { root.innerHTML = reviewView(); return; }
   const due = stats().due;
-  const tab = (key, label, extra = '') => `<button class="tab ${ui.tab === key || (key === 'home' && (ui.tab === 'deck' || ui.tab === 'folder' || ui.tab === 'ufolder')) ? 'on' : ''}" data-act="tab" data-id="${key}">${label}${extra}</button>`;
+  const tab = (key, label, extra = '') => `<button class="tab ${ui.tab === key || (key === 'decks' && ui.tab === 'deck') || (key === 'folders' && (ui.tab === 'folder' || ui.tab === 'ufolder')) ? 'on' : ''}" data-act="tab" data-id="${key}">${label}${extra}</button>`;
   root.innerHTML = `
     <header>
       <span class="logo">Révision</span>
-      ${tab('home', 'Accueil')}${tab('stats', 'Stats')}
+      ${tab('home', 'Accueil')}${tab('decks', 'Decks')}${tab('folders', 'Dossiers')}${tab('stats', 'Stats')}
       ${tab('review', 'Révision', due ? `<span class="badge">${due}</span>` : '')}
       ${tab('plan', 'Plan & données')}
       <span class="sp"></span>
       <span class="syncstat" id="syncstat">${syncLabel()}</span>
-      ${ui.tab === 'home' ? '<button class="primary" data-act="deck-new">+ Nouveau deck</button>' : ''}
+      ${ui.tab === 'decks' ? '<button class="primary" data-act="deck-new">+ Nouveau deck</button>' : ui.tab === 'folders' ? '<button class="primary" data-act="folder-new">+ Nouveau dossier</button>' : ''}
     </header>
-    <main>${ui.tab === 'home' ? homeView() : ui.tab === 'deck' ? deckView() : ui.tab === 'folder' ? folderView() : ui.tab === 'ufolder' ? ufolderView() : ui.tab === 'stats' ? statsView() : ui.tab === 'review' ? reviewTabView() : planView()}</main>`;
+    <main>${ui.tab === 'home' ? homeView() : ui.tab === 'decks' ? decksView() : ui.tab === 'folders' ? foldersView() : ui.tab === 'deck' ? deckView() : ui.tab === 'folder' ? folderView() : ui.tab === 'ufolder' ? ufolderView() : ui.tab === 'stats' ? statsView() : ui.tab === 'review' ? reviewTabView() : planView()}</main>`;
 }
 
 function deckRow(d, fid) {
@@ -347,35 +359,72 @@ function deckRow(d, fid) {
   </div>`;
 }
 const folderIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" style="vertical-align:-3px;margin-right:8px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+// Recherche sans tenir compte des majuscules ni des accents.
+const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const cardMatch = (c, q) => !q || norm(c.front).includes(q) || norm(c.back).includes(q);
+function snippet(x) { x = String(x || '').replace(/\s+/g, ' ').trim(); return x.length > 90 ? x.slice(0, 90) + '…' : x; }
+function cardResults(q) {
+  if (!q) return '';
+  const t = now(), found = data.cards.filter((c) => cardMatch(c, q)).slice(0, 50);
+  if (!found.length) return '';
+  return `<div class="section">CARTES TROUVÉES</div>` + found.map((c) => {
+    const d = data.decks.find((x) => x.id === c.deckId);
+    return `<div class="row" data-act="card-edit" data-id="${c.id}"><div class="rowmain"><div class="name">${esc(snippet(c.front))}</div>
+      <div class="meta">${esc(snippet(c.back))} · ${esc(d ? d.name : '')}</div></div>
+      <div class="badges"><div class="d ${isDue(c, t) ? 'on' : ''}">${c.done ? 'TERMINÉE' : isNew(c) ? 'NEUVE' : isDue(c, t) ? 'À RÉVISER' : formatIn(c.due, t).toUpperCase()}</div></div></div>`;
+  }).join('');
+}
 function homeList() {
-  const q = ui.q.trim().toLowerCase();
-  const decks = data.decks.filter((d) => !isComplete(d.id) && d.name.toLowerCase().includes(q));
+  const q = norm(ui.q.trim());
+  const cardsHtml = cardResults(q);
+  const decks = data.decks.filter((d) => !isComplete(d.id) && norm(d.name).includes(q));
   const finished = data.decks.filter((d) => isComplete(d.id));
-  if (!data.decks.length && !data.folders.length) {
+  if (!data.decks.length) {
     return `<div class="empty"><div style="font-size:54px">🗂</div><h2>Aucun deck pour l’instant</h2>
       <p>Crée ton premier deck, ajoute des cartes, et l’application te dira quoi réviser et quand.</p>
-      <div class="btnrow" style="justify-content:center"><button class="primary" data-act="deck-new">+ Nouveau deck</button><button class="ghost" data-act="folder-new">+ Nouveau dossier</button></div></div>`;
+      <div class="btnrow" style="justify-content:center"><button class="primary" data-act="deck-new">+ Nouveau deck</button></div></div>`;
   }
-  const myFolders = data.folders.filter((f) => isRoot(f) && f.name.toLowerCase().includes(q)).sort(byName);
   const withDue = decks.filter((d) => stats(d.id).due > 0).sort((a, b) => stats(b.id).due - stats(a.id).due);
   const others = decks.filter((d) => stats(d.id).due === 0).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   return (withDue.length ? `<div class="section">À RÉVISER</div>${withDue.map((d) => deckRow(d)).join('')}` : '') +
     (others.length ? `<div class="section">${withDue.length ? 'AUTRES DECKS' : 'DECKS'}</div>${others.map((d) => deckRow(d)).join('')}` : '') +
-    (!decks.length && q && !myFolders.length ? '<div class="empty">Aucun résultat</div>' : '') +
-    `<div class="section flex"><span>DOSSIERS</span><button class="mini" data-act="folder-new">+ Nouveau dossier</button></div>
-     <div class="row" data-act="folder-open"><div class="rowmain"><div class="name">${folderIcon}${FOLDER}</div>
+    (!decks.length && q && !cardsHtml ? '<div class="empty">Aucun résultat</div>' : '') + cardsHtml;
+}
+function autoFolderRow() {
+  const finished = data.decks.filter((d) => isComplete(d.id));
+  return `<div class="row" data-act="folder-open"><div class="rowmain"><div class="name">${folderIcon}${FOLDER}</div>
        <div class="meta">${finished.length} ${plural(finished.length, 'deck terminé', 'decks terminés')} · decks dont toutes les cartes ont passé la semaine 16</div></div>
-       <div class="badges"><div class="d">›</div></div></div>` + myFolders.map((f) => folderRow(f)).join('');
+       <div class="badges"><div class="d">›</div></div></div>`;
+}
+// Les dossiers ont leur propre barre de recherche, séparée de celle des decks et des cartes.
+function folderList() {
+  const fq = norm(ui.fq.trim()), myFolders = data.folders.filter((f) => isRoot(f) && norm(f.name).includes(fq)).sort(byName);
+  const auto = !fq || norm(FOLDER).includes(fq) ? autoFolderRow() : '';
+  const html = auto + myFolders.map((f) => folderRow(f)).join('');
+  return html || '<p class="muted">Aucun dossier ne correspond.</p>';
 }
 function folderView() {
   const finished = data.decks.filter((d) => isComplete(d.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  return `<div class="pagehead"><button class="ghost" data-act="tab" data-id="home">← Decks</button>
+  return `<div class="pagehead"><button class="ghost" data-act="tab" data-id="folders">← Dossiers</button>
       <h1>${folderIcon}${FOLDER}</h1></div>
     <p class="muted">Ici arrivent les decks dont toutes les cartes ont terminé le calendrier (révision de la semaine 16 faite). Ils ne demandent plus aucune révision.</p>
     ${finished.length ? `<div class="section">DECKS TERMINÉS</div>${finished.map((d) => deckRow(d)).join('')}` : '<div class="empty">Aucun deck terminé pour l’instant.</div>'}`;
 }
 function homeView() {
-  return `<input class="search" id="q" placeholder="Rechercher un deck…" value="${esc(ui.q)}" autocomplete="off"><div id="list">${homeList()}</div>`;
+  const decks = recent.decks.map((id) => data.decks.find((d) => d.id === id)).filter(Boolean).slice(0, 5);
+  const folders = recent.folders.map((id) => (id === AUTO_ID ? AUTO_ID : fById(id))).filter(Boolean).slice(0, 3);
+  return `<div class="section">DERNIERS DECKS CONSULTÉS</div>
+    ${decks.length ? decks.map((d) => deckRow(d)).join('') : '<p class="muted">Aucun deck consulté pour l’instant.</p>'}
+    <hr class="sep">
+    <div class="section">DERNIERS DOSSIERS CONSULTÉS</div>
+    ${folders.length ? folders.map((f) => (f === AUTO_ID ? autoFolderRow() : folderRow(f))).join('') : '<p class="muted">Aucun dossier consulté pour l’instant.</p>'}`;
+}
+function decksView() {
+  return `<input class="search" id="q" placeholder="Rechercher un deck ou une carte…" value="${esc(ui.q)}" autocomplete="off"><div id="list">${homeList()}</div>`;
+}
+function foldersView() {
+  return `<input class="search" id="fq" placeholder="Rechercher un dossier…" value="${esc(ui.fq)}" autocomplete="off">
+    <div id="flist">${folderList()}</div>`;
 }
 
 /* ========== Dossiers et sous-dossiers ==========
@@ -410,7 +459,7 @@ function deleteFolder(id) {
   gone.forEach((x) => tombstone('folder', x));
   data.folders = data.folders.filter((f) => !gone.has(f.id)); save();
 }
-function openFolder(id) { ui.folderId = id; setView('ufolder'); }
+function openFolder(id) { ui.folderId = id; touchRecent('folders', id); setView('ufolder'); }
 
 function folderRow(f) {
   const decks = folderDecks(f), due = decks.reduce((n, d) => n + stats(d.id).due, 0), ns = kids(f.id).length;
@@ -421,10 +470,10 @@ function folderRow(f) {
 }
 function ufolderView() {
   const f = fById(ui.folderId);
-  if (!f) { ui.tab = 'home'; return homeView(); }
+  if (!f) { ui.tab = 'folders'; return foldersView(); }
   const parent = f.parentId ? fById(f.parentId) : null, subs = kids(f.id), decks = folderDecks(f);
   const nRev = queueFor(null, folderDeckSet(f.id)).length;
-  return `<div class="pagehead"><button class="ghost" data-act="folder-up">← ${esc(parent ? parent.name : 'Accueil')}</button>
+  return `<div class="pagehead"><button class="ghost" data-act="folder-up">← ${esc(parent ? parent.name : 'Dossiers')}</button>
       <h1>${folderIcon}${esc(f.name)}</h1>
       <button class="ghost" data-act="folder-rename">Renommer</button><button class="ghost danger" data-act="folder-del">Supprimer</button></div>
     <button class="cta" style="margin:6px 0 4px" data-act="folder-review" data-id="${f.id}" ${nRev ? '' : 'disabled'}>▶ ${nRev ? `Réviser ${nRev} ${plural(nRev, 'carte', 'cartes')}` : 'Rien à réviser'}</button>
@@ -447,10 +496,18 @@ function addDecksModal(fid) {
     `<div class="actions"><span class="sp"></span><button class="ghost" data-act="close">Annuler</button>${cand.length ? `<button class="primary" data-act="folder-add-ok" data-id="${f.id}">Ajouter</button>` : ''}</div>`);
 }
 
+function deckGrid(allCs, cs, t) {
+  if (!allCs.length) return '<p class="muted">Aucune carte. Clique sur + pour en ajouter.</p>';
+  if (!cs.length) return '<p class="muted">Aucune carte ne correspond.</p>';
+  return `<div class="grid">${cs.map((c) => `
+      <div class="tile ${isDue(c, t) ? 'due' : ''}" data-act="card-edit" data-id="${c.id}">
+        <div class="th">${c.done ? 'TERMINÉE' : isNew(c) ? 'NEUVE' : isDue(c, t) ? 'À RÉVISER' : formatIn(c.due, t).toUpperCase()}</div>
+        <div class="tb">${esc(c.front)}</div></div>`).join('')}</div>`;
+}
 function deckView() {
   const d = data.decks.find((x) => x.id === ui.deckId);
-  if (!d) { ui.tab = 'home'; return homeView(); }
-  const t = now(), cs = data.cards.filter((c) => c.deckId === d.id), st = stats(d.id);
+  if (!d) { ui.tab = 'decks'; return decksView(); }
+  const t = now(), allCs = data.cards.filter((c) => c.deckId === d.id), st = stats(d.id), cs = allCs.filter((c) => cardMatch(c, norm(ui.cq.trim())));
   let items;
   if (ui.chartMode === 'dist') {
     const b = [0, 0, 0, 0, 0, 0];
@@ -473,7 +530,7 @@ function deckView() {
   const n = st.due + st.new;
   return `
     <div class="pagehead">
-      <button class="ghost" data-act="tab" data-id="home">← Decks</button>
+      <button class="ghost" data-act="tab" data-id="decks">← Decks</button>
       <h1>${esc(d.name)}</h1>
       <button class="ghost" data-act="deck-rename">Renommer</button>
       <button class="ghost danger" data-act="deck-del">Supprimer</button>
@@ -483,11 +540,9 @@ function deckView() {
       <button class="${ui.chartMode === 'up' ? 'on' : ''}" data-act="chart" data-id="up">À venir</button></span></h2>
     ${chart(items)}
     <h2 class="sub">Cartes <button class="plus" data-act="card-new" title="Nouvelle carte">+</button>
-      <span class="muted" style="margin-left:auto">${cs.length}</span></h2>
-    ${cs.length ? `<div class="grid">${cs.map((c) => `
-      <div class="tile ${isDue(c, t) ? 'due' : ''}" data-act="card-edit" data-id="${c.id}">
-        <div class="th">${c.done ? 'TERMINÉE' : isNew(c) ? 'NEUVE' : isDue(c, t) ? 'À RÉVISER' : formatIn(c.due, t).toUpperCase()}</div>
-        <div class="tb">${esc(c.front)}</div></div>`).join('')}</div>` : '<p class="muted">Aucune carte. Clique sur + pour en ajouter.</p>'}
+      <span class="muted" style="margin-left:auto">${allCs.length}</span></h2>
+    ${allCs.length > 1 ? `<input class="search" id="cq" placeholder="Rechercher dans ce deck…" value="${esc(ui.cq)}" autocomplete="off">` : ''}
+    <div id="cgrid">${deckGrid(allCs, cs, t)}</div>
     <button class="cta" data-act="review-start" data-id="${d.id}" ${n ? '' : 'disabled'}>▶ ${n ? `Réviser ${n} ${plural(n, 'carte', 'cartes')}` : 'Rien à réviser'}</button>`;
 }
 
@@ -643,12 +698,12 @@ document.addEventListener('click', (e) => {
       confirmBox('Supprimer ce deck ?', `Le deck « ${d.name} » et ses ${n} cartes seront supprimés.`, 'Supprimer', () => {
         data.cards.filter((c) => c.deckId === d.id).forEach((c) => tombstone('card', c.id)); tombstone('deck', d.id); untrackDeck(d.id);
         data.decks = data.decks.filter((x) => x.id !== d.id); data.cards = data.cards.filter((c) => c.deckId !== d.id);
-        save(); closeModal(); setView('home');
+        save(); closeModal(); setView('decks');
       }); break; }
     case 'folder-new': askText('Nouveau dossier', '', 'Créer', (name) => { if (!name.trim()) return; createFolder(name, null); closeModal(); render(); }); break;
     case 'subfolder-new': askText('Nouveau sous-dossier', '', 'Créer', (name) => { if (!name.trim()) return; createFolder(name, ui.folderId); closeModal(); render(); }); break;
     case 'ufolder-open': openFolder(id); break;
-    case 'folder-up': { const f = fById(ui.folderId), p = f && f.parentId && fById(f.parentId); if (p) openFolder(p.id); else setView('home'); break; }
+    case 'folder-up': { const f = fById(ui.folderId), p = f && f.parentId && fById(f.parentId); if (p) openFolder(p.id); else setView('folders'); break; }
     case 'folder-add': addDecksModal(id); break;
     case 'folder-add-ok': {
       const f = fById(id), allowed = new Set(addableDecks(f).map((d) => d.id));
@@ -664,7 +719,7 @@ document.addEventListener('click', (e) => {
       const f = fById(ui.folderId), n = descendants(f.id).length;
       confirmBox('Supprimer ce dossier ?', `Le dossier « ${f.name} »${n ? ` et ses ${n} ${plural(n, 'sous-dossier', 'sous-dossiers')}` : ''} sera supprimé. Les decks et les cartes ne sont pas supprimés.`, 'Supprimer', () => {
         const parentId = f.parentId; deleteFolder(f.id); closeModal();
-        const p = parentId && fById(parentId); if (p) openFolder(p.id); else setView('home');
+        const p = parentId && fById(parentId); if (p) openFolder(p.id); else setView('folders');
       }); break; }
     case 'sync-login': doAuth('login'); break;
     case 'sync-signup': doAuth('signup'); break;
@@ -703,6 +758,12 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('input', (e) => {
   if (e.target.id === 'q') { ui.q = e.target.value; $('#list').innerHTML = homeList(); }
+  if (e.target.id === 'fq') { ui.fq = e.target.value; $('#flist').innerHTML = folderList(); }
+  if (e.target.id === 'cq') {
+    ui.cq = e.target.value;
+    const allCs = data.cards.filter((c) => c.deckId === ui.deckId);
+    $('#cgrid').innerHTML = deckGrid(allCs, allCs.filter((c) => cardMatch(c, norm(ui.cq.trim()))), now());
+  }
 });
 document.addEventListener('change', (e) => {
   if (e.target.id !== 'file' || !e.target.files[0]) return;
