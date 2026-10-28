@@ -149,6 +149,17 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
 .done { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap: 8px; }
 .done h2 { font-size: 30px; margin: 0; }
 
+.section.flex { display:flex; justify-content:space-between; align-items:center; }
+.mini { background: var(--bg4); color: var(--t1); border-radius: 8px; padding: 3px 10px; font-size: 12px; font-weight: 700; letter-spacing: 0; }
+.mini:hover { background: var(--accentDim); color: var(--onAccent); }
+.list { border-radius: 10px; overflow: hidden; }
+.row .plus { flex: none; }
+.x { flex: none; padding: 6px 10px; border-radius: 10px; color: var(--t3); font-size: 15px; }
+.x:hover { background: var(--bg3); color: var(--t1); }
+.picklist { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--bg2); }
+.modal .pick { display:flex; align-items:center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 17px; margin: 0; color: var(--t1); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.modal .pick:last-child { border-bottom: 0; }
+.modal .pick input { width: 20px; height: 20px; padding: 0; accent-color: #D8D4CD; flex: none; }
 .lab { display:block; color: var(--t3); font-size: 12px; font-weight: 700; letter-spacing:.05em; text-transform: uppercase; margin: 10px 0 5px; }
 .inp { width:100%; background: var(--bg1); border:1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
 .err { color: var(--t1); font-weight: 600; margin: 12px 0 0; }
@@ -221,7 +232,7 @@ function planLabels(n) {
 
 /* ========== Données (sauvegardées dans le navigateur) ========== */
 const KEY = 'revision-app/v1';
-const blank = () => ({ decks: [], cards: [], log: [], tomb: {} });
+const blank = () => ({ decks: [], cards: [], folders: [], log: [], tomb: {} });
 let data = load();
 function load() {
   let d = blank();
@@ -233,6 +244,9 @@ function load() {
 function migrate(d) {
   const t = Date.now();
   if (!d.tomb) d.tomb = {};
+  if (!d.folders) d.folders = [];
+  d.cards = d.cards.filter((c) => typeof c.front === 'string');   // écarte d'éventuels éléments étrangers reçus d'une ancienne version
+  d.folders.forEach((x) => { if (!x.u) x.u = x.createdAt || t; if (!x.deckIds) x.deckIds = []; });
   d.decks.forEach((x) => { if (!x.u) x.u = x.updatedAt || x.createdAt || t; });
   d.cards.forEach((x) => { if (!x.u) x.u = x.lastReview || x.createdAt || t; });
   d.log.forEach((l) => { if (!l.id) l.id = 'l_' + l.t + '_' + l.cardId; });
@@ -243,11 +257,11 @@ function tombstone(kind, id) { data.tomb[id] = { kind, u: Date.now() }; }
 // Remplace toutes les données (import, effacement) en laissant des tombes pour ce qui disparaît.
 function replaceAll(next) {
   next = migrate(next);
-  const t = Date.now(), keep = new Set([...next.decks, ...next.cards, ...next.log].map((x) => x.id)), tomb = {};
+  const t = Date.now(), keep = new Set([...next.decks, ...next.cards, ...next.folders, ...next.log].map((x) => x.id)), tomb = {};
   const mark = (kind, list) => list.forEach((x) => { if (!keep.has(x.id)) tomb[x.id] = { kind, u: t }; });
-  mark('deck', data.decks); mark('card', data.cards); mark('log', data.log);
+  mark('deck', data.decks); mark('card', data.cards); mark('folder', data.folders); mark('log', data.log);
   for (const [id, v] of Object.entries(data.tomb)) if (!keep.has(id) && !tomb[id]) tomb[id] = v;
-  next.decks.forEach((x) => (x.u = t)); next.cards.forEach((x) => (x.u = t));
+  next.decks.forEach((x) => (x.u = t)); next.cards.forEach((x) => (x.u = t)); next.folders.forEach((x) => (x.u = t));
   next.tomb = tomb; data = next; save();
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -266,12 +280,16 @@ function stats(deckId) {
 }
 // Un deck est "terminé" quand toutes ses cartes ont fini le calendrier -> dossier « Semaine +16 ».
 function isComplete(deckId) { const s = stats(deckId); return s.total > 0 && s.done === s.total; }
-function queueFor(deckId) {
+function queueFor(deckId, deckSet) {
   const t = now();
-  const cs = data.cards.filter((c) => !deckId || c.deckId === deckId);
+  const cs = data.cards.filter((c) => (!deckId || c.deckId === deckId) && (!deckSet || deckSet.has(c.deckId)));
   const due = cs.filter((c) => isDue(c, t)).sort((a, b) => a.due - b.due);
   const fresh = cs.filter(isNew).sort((a, b) => a.createdAt - b.createdAt);
-  return [...due, ...fresh].map((c) => c.id);
+  return shuffle([...due, ...fresh].map((c) => c.id));   // ordre aléatoire à chaque séance
+}
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
 }
 
 /* ========== Utilitaires d'affichage ========== */
@@ -290,7 +308,7 @@ function chart(items) {
 }
 
 /* ========== État de l'interface ========== */
-const ui = { tab: 'home', deckId: null, q: '', chartMode: 'dist', review: null };
+const ui = { tab: 'home', deckId: null, folderId: null, q: '', chartMode: 'dist', review: null };
 
 function setView(tab, deckId = null) { ui.tab = tab; ui.deckId = deckId; ui.review = null; render(); window.scrollTo(0, 0); }
 
@@ -299,7 +317,7 @@ function render() {
   const root = $('#app');
   if (ui.review) { root.innerHTML = reviewView(); return; }
   const due = stats().due;
-  const tab = (key, label, extra = '') => `<button class="tab ${ui.tab === key || (key === 'home' && (ui.tab === 'deck' || ui.tab === 'folder')) ? 'on' : ''}" data-act="tab" data-id="${key}">${label}${extra}</button>`;
+  const tab = (key, label, extra = '') => `<button class="tab ${ui.tab === key || (key === 'home' && (ui.tab === 'deck' || ui.tab === 'folder' || ui.tab === 'ufolder')) ? 'on' : ''}" data-act="tab" data-id="${key}">${label}${extra}</button>`;
   root.innerHTML = `
     <header>
       <span class="logo">Révision</span>
@@ -310,10 +328,10 @@ function render() {
       <span class="syncstat" id="syncstat">${syncLabel()}</span>
       ${ui.tab === 'home' ? '<button class="primary" data-act="deck-new">+ Nouveau deck</button>' : ''}
     </header>
-    <main>${ui.tab === 'home' ? homeView() : ui.tab === 'deck' ? deckView() : ui.tab === 'folder' ? folderView() : ui.tab === 'stats' ? statsView() : ui.tab === 'review' ? reviewTabView() : planView()}</main>`;
+    <main>${ui.tab === 'home' ? homeView() : ui.tab === 'deck' ? deckView() : ui.tab === 'folder' ? folderView() : ui.tab === 'ufolder' ? ufolderView() : ui.tab === 'stats' ? statsView() : ui.tab === 'review' ? reviewTabView() : planView()}</main>`;
 }
 
-function deckRow(d) {
+function deckRow(d, fid) {
   const st = stats(d.id), t = now();
   return `<div class="row" data-act="deck-open" data-id="${d.id}">
     <div class="rowmain"><div class="name">${esc(d.name)}</div>
@@ -321,6 +339,7 @@ function deckRow(d) {
     <div class="badges"><div class="d ${st.due ? 'on' : ''}">${st.total && st.done === st.total ? 'TERMINÉ' : `${st.due} À FAIRE`}</div>
       <div class="bar ${st.due ? 'due' : st.new ? 'new' : ''}"></div>
       <div class="n">${st.new ? `${st.new} ${plural(st.new, 'NEUVE', 'NEUVES')}` : ''}</div></div>
+    ${fid ? `<button class="x" data-act="folder-remove" data-id="${d.id}" data-f="${fid}" title="Retirer du dossier" aria-label="Retirer du dossier">✕</button>` : ''}
   </div>`;
 }
 const folderIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" style="vertical-align:-3px;margin-right:8px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
@@ -328,30 +347,100 @@ function homeList() {
   const q = ui.q.trim().toLowerCase();
   const decks = data.decks.filter((d) => !isComplete(d.id) && d.name.toLowerCase().includes(q));
   const finished = data.decks.filter((d) => isComplete(d.id));
-  if (!data.decks.length) {
+  if (!data.decks.length && !data.folders.length) {
     return `<div class="empty"><div style="font-size:54px">🗂</div><h2>Aucun deck pour l’instant</h2>
       <p>Crée ton premier deck, ajoute des cartes, et l’application te dira quoi réviser et quand.</p>
-      <button class="primary" data-act="deck-new">+ Nouveau deck</button></div>`;
+      <div class="btnrow" style="justify-content:center"><button class="primary" data-act="deck-new">+ Nouveau deck</button><button class="ghost" data-act="folder-new">+ Nouveau dossier</button></div></div>`;
   }
+  const myFolders = data.folders.filter((f) => isRoot(f) && f.name.toLowerCase().includes(q)).sort(byName);
   const withDue = decks.filter((d) => stats(d.id).due > 0).sort((a, b) => stats(b.id).due - stats(a.id).due);
   const others = decks.filter((d) => stats(d.id).due === 0).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  return (withDue.length ? `<div class="section">À RÉVISER</div>${withDue.map(deckRow).join('')}` : '') +
-    (others.length ? `<div class="section">${withDue.length ? 'AUTRES DECKS' : 'DECKS'}</div>${others.map(deckRow).join('')}` : '') +
-    (!decks.length && q ? '<div class="empty">Aucun résultat</div>' : '') +
-    `<div class="section">DOSSIERS</div>
+  return (withDue.length ? `<div class="section">À RÉVISER</div>${withDue.map((d) => deckRow(d)).join('')}` : '') +
+    (others.length ? `<div class="section">${withDue.length ? 'AUTRES DECKS' : 'DECKS'}</div>${others.map((d) => deckRow(d)).join('')}` : '') +
+    (!decks.length && q && !myFolders.length ? '<div class="empty">Aucun résultat</div>' : '') +
+    `<div class="section flex"><span>DOSSIERS</span><button class="mini" data-act="folder-new">+ Nouveau dossier</button></div>
      <div class="row" data-act="folder-open"><div class="rowmain"><div class="name">${folderIcon}${FOLDER}</div>
        <div class="meta">${finished.length} ${plural(finished.length, 'deck terminé', 'decks terminés')} · decks dont toutes les cartes ont passé la semaine 16</div></div>
-       <div class="badges"><div class="d">›</div></div></div>`;
+       <div class="badges"><div class="d">›</div></div></div>` + myFolders.map((f) => folderRow(f)).join('');
 }
 function folderView() {
   const finished = data.decks.filter((d) => isComplete(d.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   return `<div class="pagehead"><button class="ghost" data-act="tab" data-id="home">← Decks</button>
       <h1>${folderIcon}${FOLDER}</h1></div>
     <p class="muted">Ici arrivent les decks dont toutes les cartes ont terminé le calendrier (révision de la semaine 16 faite). Ils ne demandent plus aucune révision.</p>
-    ${finished.length ? `<div class="section">DECKS TERMINÉS</div>${finished.map(deckRow).join('')}` : '<div class="empty">Aucun deck terminé pour l’instant.</div>'}`;
+    ${finished.length ? `<div class="section">DECKS TERMINÉS</div>${finished.map((d) => deckRow(d)).join('')}` : '<div class="empty">Aucun deck terminé pour l’instant.</div>'}`;
 }
 function homeView() {
   return `<input class="search" id="q" placeholder="Rechercher un deck…" value="${esc(ui.q)}" autocomplete="off"><div id="list">${homeList()}</div>`;
+}
+
+/* ========== Dossiers et sous-dossiers ==========
+   Un dossier regroupe des decks. Un deck peut être dans plusieurs dossiers et reste aussi dans la liste de l'accueil.
+   Un sous-dossier ne peut recevoir que des decks déjà présents dans son dossier parent. */
+const byName = (a, b) => a.name.localeCompare(b.name, 'fr');
+const fById = (id) => data.folders.find((f) => f.id === id);
+const isRoot = (f) => !f.parentId || !fById(f.parentId);      // un dossier dont le parent a disparu remonte à l'accueil
+const kids = (id) => data.folders.filter((f) => f.parentId === id).sort(byName);
+function descendants(id) { const out = []; for (const k of kids(id)) out.push(k.id, ...descendants(k.id)); return out; }
+const folderDecks = (f) => f.deckIds.map((id) => data.decks.find((d) => d.id === id)).filter(Boolean).sort(byName);
+function folderDeckSet(id) {
+  const ids = new Set();
+  for (const x of [id, ...descendants(id)]) { const f = fById(x); if (f) f.deckIds.forEach((d) => ids.add(d)); }
+  return new Set([...ids].filter((d) => data.decks.some((k) => k.id === d)));
+}
+function addableDecks(f) {
+  const parent = f.parentId ? fById(f.parentId) : null;
+  const pool = f.parentId ? (parent ? folderDecks(parent) : []) : data.decks;
+  return pool.filter((d) => !f.deckIds.includes(d.id)).sort(byName);
+}
+function setFolders(ids, fn) { const t = now(); data.folders = data.folders.map((f) => (ids.includes(f.id) ? { ...f, ...fn(f), u: t } : f)); }
+function createFolder(name, parentId) {
+  const t = now(), f = { id: uid(), name: name.trim() || 'Nouveau dossier', parentId: parentId || null, deckIds: [], createdAt: t, u: t };
+  data.folders.push(f); save(); return f;
+}
+// Retirer un deck d'un dossier le retire aussi de tous ses sous-dossiers.
+function removeFromFolder(fid, deckId) { setFolders([fid, ...descendants(fid)], (f) => ({ deckIds: f.deckIds.filter((x) => x !== deckId) })); save(); }
+function untrackDeck(deckId) { setFolders(data.folders.filter((f) => f.deckIds.includes(deckId)).map((f) => f.id), (f) => ({ deckIds: f.deckIds.filter((x) => x !== deckId) })); }
+function deleteFolder(id) {
+  const gone = new Set([id, ...descendants(id)]);
+  gone.forEach((x) => tombstone('folder', x));
+  data.folders = data.folders.filter((f) => !gone.has(f.id)); save();
+}
+function openFolder(id) { ui.folderId = id; setView('ufolder'); }
+
+function folderRow(f) {
+  const decks = folderDecks(f), due = decks.reduce((n, d) => n + stats(d.id).due, 0), ns = kids(f.id).length;
+  return `<div class="row" data-act="ufolder-open" data-id="${f.id}"><div class="rowmain"><div class="name">${folderIcon}${esc(f.name)}</div>
+    <div class="meta">${decks.length} ${plural(decks.length, 'deck', 'decks')}${ns ? ` · ${ns} ${plural(ns, 'sous-dossier', 'sous-dossiers')}` : ''}</div></div>
+    <div class="badges"><div class="d ${due ? 'on' : ''}">${due} À FAIRE</div></div>
+    <button class="plus" data-act="folder-add" data-id="${f.id}" title="Ajouter des decks à ce dossier" aria-label="Ajouter des decks">+</button></div>`;
+}
+function ufolderView() {
+  const f = fById(ui.folderId);
+  if (!f) { ui.tab = 'home'; return homeView(); }
+  const parent = f.parentId ? fById(f.parentId) : null, subs = kids(f.id), decks = folderDecks(f);
+  const nRev = queueFor(null, folderDeckSet(f.id)).length;
+  return `<div class="pagehead"><button class="ghost" data-act="folder-up">← ${esc(parent ? parent.name : 'Accueil')}</button>
+      <h1>${folderIcon}${esc(f.name)}</h1>
+      <button class="ghost" data-act="folder-rename">Renommer</button><button class="ghost danger" data-act="folder-del">Supprimer</button></div>
+    <button class="cta" style="margin:6px 0 4px" data-act="folder-review" data-id="${f.id}" ${nRev ? '' : 'disabled'}>▶ ${nRev ? `Réviser ${nRev} ${plural(nRev, 'carte', 'cartes')}` : 'Rien à réviser'}</button>
+    <h2 class="sub">Decks <button class="plus" data-act="folder-add" data-id="${f.id}" title="Ajouter des decks" aria-label="Ajouter des decks">+</button>
+      <span class="muted" style="margin-left:auto">${decks.length}</span></h2>
+    ${parent ? `<p class="muted" style="margin:-4px 0 10px">Dans un sous-dossier, tu peux seulement ajouter des decks déjà présents dans « ${esc(parent.name)} ».</p>` : ''}
+    ${decks.length ? `<div class="list">${decks.map((d) => deckRow(d, f.id)).join('')}</div>` : '<p class="muted">Aucun deck dans ce dossier. Clique sur + pour en ajouter.</p>'}
+    <h2 class="sub">Sous-dossiers <button class="ghost" data-act="subfolder-new" style="margin-left:auto;font-size:14px;padding:7px 12px">+ Sous-dossier</button></h2>
+    ${subs.length ? `<div class="list">${subs.map((k) => folderRow(k)).join('')}</div>` : '<p class="muted">Aucun sous-dossier.</p>'}`;
+}
+function addDecksModal(fid) {
+  const f = fById(fid); if (!f) return;
+  const parent = f.parentId ? fById(f.parentId) : null, cand = addableDecks(f);
+  const none = parent ? `Aucun deck à ajouter : tous les decks de « ${esc(parent.name)} » sont déjà dans ce sous-dossier (ou « ${esc(parent.name)} » est vide).`
+                      : 'Aucun deck à ajouter : tous tes decks sont déjà dans ce dossier (ou tu n’as pas encore de deck).';
+  showModal(`<h2>Ajouter des decks à « ${esc(f.name)} »</h2>` + (cand.length
+    ? `${parent ? `<p class="muted" style="margin:0 0 10px;font-size:14px">Seuls les decks déjà présents dans « ${esc(parent.name)} » sont proposés.</p>` : ''}
+       <div class="picklist">${cand.map((d) => `<label class="pick"><input type="checkbox" class="cb-deck" value="${d.id}"><span>${esc(d.name)}</span></label>`).join('')}</div>`
+    : `<p class="muted" style="font-size:15px">${none}</p>`) +
+    `<div class="actions"><span class="sp"></span><button class="ghost" data-act="close">Annuler</button>${cand.length ? `<button class="primary" data-act="folder-add-ok" data-id="${f.id}">Ajouter</button>` : ''}</div>`);
 }
 
 function deckView() {
@@ -513,8 +602,8 @@ function saveCard(more) {
 }
 
 /* ========== Actions ========== */
-function startReview(deckId) {
-  ui.review = { queue: queueFor(deckId), i: 0, flipped: false, known: 0, forgot: 0 };
+function startReview(deckId, deckSet) {
+  ui.review = { queue: queueFor(deckId, deckSet), i: 0, flipped: false, known: 0, forgot: 0 };
   render(); window.scrollTo(0, 0);
 }
 function reply(knew) {
@@ -548,9 +637,30 @@ document.addEventListener('click', (e) => {
     case 'deck-del': {
       const d = data.decks.find((x) => x.id === ui.deckId), n = data.cards.filter((c) => c.deckId === d.id).length;
       confirmBox('Supprimer ce deck ?', `Le deck « ${d.name} » et ses ${n} cartes seront supprimés.`, 'Supprimer', () => {
-        data.cards.filter((c) => c.deckId === d.id).forEach((c) => tombstone('card', c.id)); tombstone('deck', d.id);
+        data.cards.filter((c) => c.deckId === d.id).forEach((c) => tombstone('card', c.id)); tombstone('deck', d.id); untrackDeck(d.id);
         data.decks = data.decks.filter((x) => x.id !== d.id); data.cards = data.cards.filter((c) => c.deckId !== d.id);
         save(); closeModal(); setView('home');
+      }); break; }
+    case 'folder-new': askText('Nouveau dossier', '', 'Créer', (name) => { if (!name.trim()) return; createFolder(name, null); closeModal(); render(); }); break;
+    case 'subfolder-new': askText('Nouveau sous-dossier', '', 'Créer', (name) => { if (!name.trim()) return; createFolder(name, ui.folderId); closeModal(); render(); }); break;
+    case 'ufolder-open': openFolder(id); break;
+    case 'folder-up': { const f = fById(ui.folderId), p = f && f.parentId && fById(f.parentId); if (p) openFolder(p.id); else setView('home'); break; }
+    case 'folder-add': addDecksModal(id); break;
+    case 'folder-add-ok': {
+      const f = fById(id), allowed = new Set(addableDecks(f).map((d) => d.id));
+      const ids = [...document.querySelectorAll('.cb-deck:checked')].map((x) => x.value).filter((x) => allowed.has(x));
+      if (ids.length) { setFolders([id], (g) => ({ deckIds: [...g.deckIds, ...ids] })); save(); }
+      closeModal(); render(); break; }
+    case 'folder-review': startReview(null, folderDeckSet(id)); break;
+    case 'folder-remove': removeFromFolder(el.dataset.f, id); render(); break;
+    case 'folder-rename': {
+      const f = fById(ui.folderId);
+      askText('Renommer le dossier', f.name, 'Renommer', (name) => { if (name.trim()) { setFolders([f.id], () => ({ name: name.trim() })); save(); } closeModal(); render(); }); break; }
+    case 'folder-del': {
+      const f = fById(ui.folderId), n = descendants(f.id).length;
+      confirmBox('Supprimer ce dossier ?', `Le dossier « ${f.name} »${n ? ` et ses ${n} ${plural(n, 'sous-dossier', 'sous-dossiers')}` : ''} sera supprimé. Les decks et les cartes ne sont pas supprimés.`, 'Supprimer', () => {
+        const parentId = f.parentId; deleteFolder(f.id); closeModal();
+        const p = parentId && fById(parentId); if (p) openFolder(p.id); else setView('home');
       }); break; }
     case 'sync-login': doAuth('login'); break;
     case 'sync-signup': doAuth('signup'); break;
@@ -646,7 +756,11 @@ let remote = null, syncUser = null, syncSt = null, syncStatus = 'idle', syncMsg 
 const syncOn = () => !!(window.__REMOTE_FACTORY__ || FIREBASE_CONFIG.apiKey);
 const typing = () => !!document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
 const emptySt = () => ({ seen: {}, cursor: 0, last: 0 });   // seen[id] = dernière version connue du serveur
-function loadSt(uid) { try { return { ...emptySt(), ...JSON.parse(localStorage.getItem(SYNC_KEY + uid)) }; } catch (e) { return emptySt(); } }
+function loadSt(uid) {
+  let st; try { st = { ...emptySt(), ...JSON.parse(localStorage.getItem(SYNC_KEY + uid)) }; } catch (e) { st = emptySt(); }
+  if (st.v !== 2) { st.v = 2; st.cursor = 0; }      // version 2 (dossiers) : on relit tout une fois, sans rien écraser
+  return st;
+}
 function saveSt() { try { if (syncUser) localStorage.setItem(SYNC_KEY + syncUser.uid, JSON.stringify(syncSt)); } catch (e) {} }
 
 async function firebaseRemote(cfg) {
@@ -680,6 +794,7 @@ function dirtyItems() {
   const seen = syncSt.seen, out = [];
   for (const d of data.decks) if (seen[d.id] !== d.u) out.push({ kind: 'deck', ...d });
   for (const c of data.cards) if (seen[c.id] !== c.u) out.push({ kind: 'card', ...c });
+  for (const f of data.folders) if (seen[f.id] !== f.u) out.push({ kind: 'folder', ...f });
   for (const [id, t] of Object.entries(data.tomb)) if (seen[id] !== t.u) out.push({ id, kind: t.kind, deleted: true, u: t.u });
   for (const l of data.log) if (!seen[l.id]) out.push({ kind: 'log', ...l, u: l.t });
   return JSON.parse(JSON.stringify(out));
@@ -699,7 +814,8 @@ function mergeIn(items) {
       }
       continue;
     }
-    const list = r.kind === 'deck' ? 'decks' : 'cards';
+    const list = { deck: 'decks', card: 'cards', folder: 'folders' }[r.kind];
+    if (!list) continue;                         // type inconnu (version plus récente) : ignoré
     const local = data[list].find((x) => x.id === r.id), tomb = data.tomb[r.id];
     const localU = local ? local.u : tomb ? tomb.u : -1;
     seen[r.id] = r.u;
