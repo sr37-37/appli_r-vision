@@ -271,11 +271,7 @@ function queueFor(deckId) {
   const cs = data.cards.filter((c) => !deckId || c.deckId === deckId);
   const due = cs.filter((c) => isDue(c, t)).sort((a, b) => a.due - b.due);
   const fresh = cs.filter(isNew).sort((a, b) => a.createdAt - b.createdAt);
-  return shuffle([...due, ...fresh].map((c) => c.id));   // ordre aléatoire à chaque séance
-}
-function shuffle(a) {
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-  return a;
+  return [...due, ...fresh].map((c) => c.id);
 }
 
 /* ========== Utilitaires d'affichage ========== */
