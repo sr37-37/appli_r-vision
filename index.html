@@ -325,7 +325,7 @@ function chart(items) {
 }
 
 /* ========== État de l'interface ========== */
-const ui = { tab: 'home', deckId: null, folderId: null, q: '', fq: '', cq: '', chartMode: 'dist', review: null };
+const ui = { tab: 'home', deckId: null, folderId: null, q: '', fq: '', cq: '', uq: '', chartMode: 'dist', review: null };
 
 // Derniers decks / dossiers consultés (propres à cet appareil, non synchronisés).
 const RECENT_KEY = 'revision-app/recent';
@@ -375,9 +375,9 @@ const folderIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" 
 const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const cardMatch = (c, q) => !q || norm(c.front).includes(q) || norm(c.back).includes(q);
 function snippet(x) { x = String(x || '').replace(/\s+/g, ' ').trim(); return x.length > 90 ? x.slice(0, 90) + '…' : x; }
-function cardResults(q) {
+function cardResults(q, deckSet) {
   if (!q) return '';
-  const t = now(), found = data.cards.filter((c) => cardMatch(c, q)).slice(0, 50);
+  const t = now(), found = data.cards.filter((c) => (!deckSet || deckSet.has(c.deckId)) && cardMatch(c, q)).slice(0, 50);
   if (!found.length) return '';
   return `<div class="section">CARTES TROUVÉES</div>` + found.map((c) => {
     const d = data.decks.find((x) => x.id === c.deckId);
@@ -479,7 +479,7 @@ function deleteFolder(id) {
   gone.forEach((x) => tombstone('folder', x));
   data.folders = data.folders.filter((f) => !gone.has(f.id)); save();
 }
-function openFolder(id) { ui.folderId = id; touchRecent('folders', id); setView('ufolder'); }
+function openFolder(id) { if (id !== ui.folderId) ui.uq = ''; ui.folderId = id; touchRecent('folders', id); setView('ufolder'); }
 
 function folderRow(f) {
   const all = [...folderDeckSet(f.id)], decks = all, due = all.reduce((n, id) => n + stats(id).due, 0), ns = kids(f.id).length;
@@ -491,18 +491,35 @@ function folderRow(f) {
 function ufolderView() {
   const f = fById(ui.folderId);
   if (!f) { ui.tab = 'folders'; return foldersView(); }
-  const parent = f.parentId ? fById(f.parentId) : null, subs = kids(f.id), decks = folderDecks(f);
+  const parent = f.parentId ? fById(f.parentId) : null;
   const nRev = queueFor(null, folderDeckSet(f.id)).length;
+  // Dossier de premier niveau : on cherche parmi ses sous-dossiers. Sous-dossier : on cherche parmi ses decks et leurs cartes.
+  const ph = parent ? 'Rechercher un deck ou une carte dans ce sous-dossier…' : 'Rechercher un sous-dossier…';
   return `<div class="pagehead"><button class="ghost" data-act="folder-up">← ${esc(parent ? parent.name : 'Dossiers')}</button>
       <h1>${folderIcon}${esc(f.name)}</h1>
       <button class="ghost" data-act="folder-rename">Renommer</button><button class="ghost danger" data-act="folder-del">Supprimer</button></div>
-    <button class="cta" style="margin:6px 0 4px" data-act="folder-review" data-id="${f.id}" ${nRev ? '' : 'disabled'}>▶ ${nRev ? `Réviser ${nRev} ${plural(nRev, 'carte', 'cartes')}` : 'Rien à réviser'}</button>
-    <h2 class="sub">Decks <button class="plus" data-act="folder-add" data-id="${f.id}" title="Ajouter des decks" aria-label="Ajouter des decks">+</button>
+    <button class="cta" style="margin:6px 0 14px" data-act="folder-review" data-id="${f.id}" ${nRev ? '' : 'disabled'}>▶ ${nRev ? `Réviser ${nRev} ${plural(nRev, 'carte', 'cartes')}` : 'Rien à réviser'}</button>
+    <input class="search" id="uq" placeholder="${ph}" value="${esc(ui.uq)}" autocomplete="off">
+    <div id="ubody">${ufolderBody(f)}</div>`;
+}
+function ufolderBody(f) {
+  const parent = f.parentId ? fById(f.parentId) : null, q = norm(ui.uq.trim());
+  let subs = kids(f.id), decks = folderDecks(f), cardsHtml = '';
+  if (q) {
+    if (parent) {
+      const set = folderDeckSet(f.id);
+      decks = decks.filter((d) => norm(d.name).includes(q) || data.cards.some((c) => c.deckId === d.id && cardMatch(c, q)));
+      cardsHtml = cardResults(q, set);
+    } else subs = subs.filter((k) => norm(k.name).includes(q));
+  }
+  const nothing = q && !(parent ? decks.length || cardsHtml : subs.length);
+  return `<h2 class="sub">Decks <button class="plus" data-act="folder-add" data-id="${f.id}" title="Ajouter des decks" aria-label="Ajouter des decks">+</button>
       <span class="muted" style="margin-left:auto">${decks.length}</span></h2>
     ${parent ? `<p class="muted" style="margin:-4px 0 10px">Dans un sous-dossier, tu peux seulement ajouter des decks déjà présents dans « ${esc(parent.name)} ».</p>` : ''}
-    ${decks.length ? `<div class="list">${decks.map((d) => deckRow(d, f.id)).join('')}</div>` : '<p class="muted">Aucun deck dans ce dossier. Clique sur + pour en ajouter.</p>'}
+    ${decks.length ? `<div class="list">${decks.map((d) => deckRow(d, f.id)).join('')}</div>` : `<p class="muted">${q && parent ? 'Aucun deck ne correspond.' : 'Aucun deck dans ce dossier. Clique sur + pour en ajouter.'}</p>`}
+    ${cardsHtml}
     <h2 class="sub">Sous-dossiers <button class="ghost" data-act="subfolder-new" style="margin-left:auto;font-size:14px;padding:7px 12px">+ Sous-dossier</button></h2>
-    ${subs.length ? `<div class="list">${subs.map((k) => folderRow(k)).join('')}</div>` : '<p class="muted">Aucun sous-dossier.</p>'}`;
+    ${subs.length ? `<div class="list">${subs.map((k) => folderRow(k)).join('')}</div>` : `<p class="muted">${q && !parent ? 'Aucun sous-dossier ne correspond.' : 'Aucun sous-dossier.'}</p>`}`;
 }
 function addDecksModal(fid) {
   const f = fById(fid); if (!f) return;
@@ -782,6 +799,7 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('input', (e) => {
   if (e.target.id === 'q') { ui.q = e.target.value; $('#list').innerHTML = homeList(); }
+  if (e.target.id === 'uq') { ui.uq = e.target.value; const f = fById(ui.folderId); if (f) $('#ubody').innerHTML = ufolderBody(f); }
   if (e.target.id === 'fq') { ui.fq = e.target.value; $('#flist').innerHTML = folderList(); }
   if (e.target.id === 'cq') {
     ui.cq = e.target.value;
