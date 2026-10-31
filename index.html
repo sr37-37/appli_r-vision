@@ -635,7 +635,7 @@ function planView() {
     <h2 class="sub">Synchronisation</h2>
     <div class="box" id="syncbox">${syncBox()}</div>
     <h2 class="sub">Mes données</h2>
-    <p class="muted" style="margin:-4px 0 10px">Version de l’application : <b>2026-10-31 · v13</b></p>
+    <p class="muted" style="margin:-4px 0 10px">Version de l’application : <b>2026-10-31 · v14</b></p>
     <div class="box"><p class="muted" style="margin:0 0 6px">Tes cartes sont enregistrées dans ce navigateur (et envoyées à ton compte si tu es connecté plus haut). Fais une sauvegarde de temps en temps, surtout si tu n’utilises pas la synchronisation.</p>
       <div class="btnrow"><button class="ghost" data-act="export">⬇ Exporter une sauvegarde</button>
         <button class="ghost" data-act="import">⬆ Importer une sauvegarde</button>
@@ -743,17 +743,19 @@ function parsePack(raw, defaultDeck) {
     const decks = (j.decks || []).map((d) => ({
       name: String(d.nom || d.name || d.deck || '').trim() || fallback,
       folder: String(d.dossier || d.folder || '').trim(),
+      clean: /^supprimer$/i.test(String(d.doublons || '')) || d.clean === true,
       cards: (d.cartes || d.cards || []).map(cardPair).filter(Boolean),
     })).filter((d) => d.cards.length);
     return { decks };
   }
-  const decks = []; let cur = null, folder = '';
+  const decks = []; let cur = null, folder = '', clean = false;
   const unesc = (s) => s.replace(/\\n/g, '\n').trim();
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const h = line.match(/^\s*#\s*(deck|paquet|dossier|folder)\s*:\s*(.*)$/i);
+    const h = line.match(/^\s*#\s*(deck|paquet|dossier|folder|doublons)\s*:\s*(.*)$/i);
     if (h) {
-      if (/^(deck|paquet)$/i.test(h[1])) { cur = { name: h[2].trim() || fallback, folder, cards: [] }; decks.push(cur); }
+      if (/^(deck|paquet)$/i.test(h[1])) { cur = { name: h[2].trim() || fallback, folder, clean, cards: [] }; decks.push(cur); }
+      else if (/^doublons$/i.test(h[1])) { clean = /^supprimer/i.test(h[2].trim()); if (cur && !cur.cards.length) cur.clean = clean; }
       else { folder = h[2].trim(); if (cur && !cur.cards.length) cur.folder = folder; }
       continue;
     }
@@ -762,14 +764,48 @@ function parsePack(raw, defaultDeck) {
     if (i < 0) continue;                         // ligne sans séparateur : ignorée
     const c = cardPair([unesc(line.slice(0, i)), unesc(line.slice(i + len))]);
     if (!c) continue;
-    if (!cur) { cur = { name: fallback, folder, cards: [] }; decks.push(cur); }
+    if (!cur) { cur = { name: fallback, folder, clean, cards: [] }; decks.push(cur); }
     cur.cards.push(c);
   }
   return { decks: decks.filter((d) => d.cards.length) };
 }
 // Range un deck dans « Dossier/Sous-dossier/… » (crée ce qui manque). Renvoie le nombre de dossiers créés.
+const pathParts = (path) => String(path || '').split('/').map((s) => s.trim()).filter(Boolean);
+// Retrouve un dossier existant à partir de son chemin, sans rien créer.
+function findFolder(path) {
+  let parentId = null, f = null;
+  for (const name of pathParts(path)) {
+    f = data.folders.find((x) => (parentId ? x.parentId === parentId : isRoot(x)) && norm(x.name) === norm(name));
+    if (!f) return null;
+    parentId = f.id;
+  }
+  return f;
+}
+function folderPath(f) { const out = []; while (f) { out.unshift(f.name); f = f.parentId && fById(f.parentId); } return out.join(' › '); }
+// Le deck visé : de préférence celui du même nom déjà rangé dans le dossier d'arrivée.
+function targetDeck(p) {
+  const same = data.decks.filter((d) => norm(d.name) === norm(p.name)), f = p.folder && findFolder(p.folder);
+  return (f && same.find((d) => f.deckIds.includes(d.id))) || same[0] || null;
+}
+// Option « doublons : supprimer » : les autres decks du même nom, ou dont toutes les cartes sont dans ce lot,
+// sont supprimés, et le deck n'est plus gardé que dans son dossier d'arrivée.
+function cleanupPlan(p, target) {
+  if (!p.clean) return { copies: [], folders: [] };
+  const fronts = new Set(p.cards.map((c) => norm(c.front)));
+  const copies = data.decks.filter((d) => d !== target && (norm(d.name) === norm(p.name) || (() => {
+    const cs = data.cards.filter((c) => c.deckId === d.id);
+    return cs.length > 0 && cs.every((c) => fronts.has(norm(c.front)));
+  })()));
+  const arrival = p.folder && findFolder(p.folder);
+  const folders = target ? data.folders.filter((f) => f.deckIds.includes(target.id) && (!arrival || f.id !== arrival.id)) : [];
+  return { copies, folders };
+}
+function deleteDeck(id) {
+  data.cards.filter((c) => c.deckId === id).forEach((c) => tombstone('card', c.id)); tombstone('deck', id); untrackDeck(id);
+  data.decks = data.decks.filter((x) => x.id !== id); data.cards = data.cards.filter((c) => c.deckId !== id);
+}
 function placeInFolder(deckId, path) {
-  const parts = path.split('/').map((s) => s.trim()).filter(Boolean);
+  const parts = pathParts(path);
   if (!parts.length) return 0;
   let parentId = null, f = null, created = 0;
   for (const name of parts) {
@@ -787,16 +823,18 @@ function placeInFolder(deckId, path) {
 }
 function packPlan(pack) {
   return pack.decks.map((p) => {
-    const deck = data.decks.find((d) => norm(d.name) === norm(p.name));
+    const deck = targetDeck(p);
     const have = new Set(deck ? data.cards.filter((c) => c.deckId === deck.id).map((c) => norm(c.front)) : []);
     let fresh = 0; for (const c of p.cards) { const k = norm(c.front); if (!have.has(k)) { fresh++; have.add(k); } }
-    return { ...p, exists: !!deck, fresh, dup: p.cards.length - fresh };
+    return { ...p, exists: !!deck, fresh, dup: p.cards.length - fresh, ...cleanupPlan(p, deck) };
   });
 }
 function applyPack(pack) {
-  const t = now(), res = { decks: 0, cards: 0, dup: 0, folders: 0, deckIds: [] };
+  const t = now(), res = { decks: 0, cards: 0, dup: 0, folders: 0, removed: 0, deckIds: [] };
   for (const p of pack.decks) {
-    let deck = data.decks.find((d) => norm(d.name) === norm(p.name));
+    let deck = targetDeck(p);
+    const clean = cleanupPlan(p, deck);
+    clean.copies.forEach((d) => { deleteDeck(d.id); res.removed++; });
     if (!deck) { deck = { id: uid(), name: p.name, createdAt: t, updatedAt: t, u: t }; data.decks.push(deck); res.decks++; }
     const have = new Set(data.cards.filter((c) => c.deckId === deck.id).map((c) => norm(c.front)));
     let added = 0;
@@ -810,6 +848,11 @@ function applyPack(pack) {
     res.cards += added;
     if (added) { deck.updatedAt = t; deck.u = t; }
     if (p.folder) res.folders += placeInFolder(deck.id, p.folder);
+    if (p.clean) {
+      const arrival = p.folder && findFolder(p.folder), id = deck.id;
+      const others = data.folders.filter((f) => f.deckIds.includes(id) && (!arrival || f.id !== arrival.id)).map((f) => f.id);
+      if (others.length) setFolders(others, (f) => ({ deckIds: f.deckIds.filter((x) => x !== id) }));
+    }
     res.deckIds.push(deck.id);
   }
   save();
@@ -821,10 +864,18 @@ function confirmPack(pack) {
   const rows = plan.map((p) => `<div class="packrow"><div class="rowmain"><div class="name">${esc(p.name)}</div>
       <div class="meta">${p.folder ? `${folderIcon.replace('margin-right:8px', 'margin-right:4px').replace(/20/g, '14')}${esc(p.folder.split('/').map((s) => s.trim()).filter(Boolean).join(' › '))} · ` : ''}${p.exists ? 'deck existant' : 'nouveau deck'}${p.dup ? ` · ${p.dup} déjà ${plural(p.dup, 'présente', 'présentes')}` : ''}</div></div>
       <b>+${p.fresh}</b></div>`).join('');
+  const copies = plan.flatMap((p) => p.copies), outFolders = plan.flatMap((p) => p.folders.map((f) => [p.name, f]));
+  const cleanHtml = copies.length || outFolders.length ? `<p class="muted" style="margin:14px 0 6px;font-weight:700;color:var(--t2)">À supprimer (doublons)</p><div class="picklist">` +
+    copies.map((d) => { const n = data.cards.filter((c) => c.deckId === d.id).length, fs = data.folders.filter((f) => f.deckIds.includes(d.id));
+      return `<div class="packrow"><div class="rowmain"><div class="name">✕ ${esc(d.name)}</div><div class="meta">deck · ${n} ${plural(n, 'carte', 'cartes')}${fs.length ? ' · ' + fs.map((f) => esc(folderPath(f))).join(', ') : ''}</div></div></div>`; }).join('') +
+    outFolders.map(([name, f]) => `<div class="packrow"><div class="rowmain"><div class="name">↦ ${esc(name)}</div><div class="meta">retiré du dossier ${esc(folderPath(f))}</div></div></div>`).join('') +
+    `</div><p class="muted" style="margin:8px 0 0">Les decks supprimés perdent leur progression ; le deck d’arrivée garde la sienne.</p>` : '';
+  const doIt = fresh || copies.length || outFolders.length || plan.some((p) => p.folder);
   showModal(`<h2>${fresh ? `Ajouter ${fresh} ${plural(fresh, 'carte', 'cartes')} ?` : 'Ces cartes sont déjà là'}</h2>
     <div class="picklist">${rows}</div>
-    <p class="muted" style="margin:12px 0 0">${fresh ? 'Les nouvelles cartes commencent à J1.' : 'Toutes ces cartes existent déjà dans leurs decks.'}${dup && fresh ? ` ${dup} ${plural(dup, 'carte déjà présente sera ignorée', 'cartes déjà présentes seront ignorées')}.` : ''}${syncUser ? ' Elles seront envoyées sur tes autres appareils.' : ''}</p>
-    <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">${fresh ? 'Annuler' : 'Fermer'}</button>${fresh || plan.some((p) => p.folder) ? `<button class="primary" data-act="pack-ok">${fresh ? 'Ajouter' : 'Ranger dans les dossiers'}</button>` : ''}</div>`);
+    <p class="muted" style="margin:12px 0 0">${fresh ? 'Les nouvelles cartes commencent à J1.' : 'Toutes ces cartes existent déjà dans leurs decks.'}${dup && fresh ? ` ${dup} ${plural(dup, 'carte déjà présente sera ignorée', 'cartes déjà présentes seront ignorées')}.` : ''}${syncUser ? ' Les changements seront envoyés sur tes autres appareils.' : ''}</p>
+    ${cleanHtml}
+    <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">${doIt ? 'Annuler' : 'Fermer'}</button>${doIt ? `<button class="primary" data-act="pack-ok">${fresh ? 'Ajouter' : copies.length || outFolders.length ? 'Nettoyer' : 'Ranger dans les dossiers'}</button>` : ''}</div>`);
   confirmPack.pack = pack;
 }
 function pasteModal() {
@@ -938,6 +989,7 @@ document.addEventListener('click', (e) => {
       const parts = [`${res.cards} ${plural(res.cards, 'carte ajoutée', 'cartes ajoutées')}`];
       if (res.decks) parts.push(`${res.decks} ${plural(res.decks, 'nouveau deck', 'nouveaux decks')}`);
       if (res.folders) parts.push(`${res.folders} ${plural(res.folders, 'dossier créé', 'dossiers créés')}`);
+      if (res.removed) parts.push(`${res.removed} ${plural(res.removed, 'doublon supprimé', 'doublons supprimés')}`);
       if (res.dup) parts.push(`${res.dup} déjà ${plural(res.dup, 'présente ignorée', 'présentes ignorées')}`);
       infoBox('C’est fait', parts.join(' · ') + '.'); break; }
     case 'sync-login': doAuth('login'); break;
