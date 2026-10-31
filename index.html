@@ -155,6 +155,11 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
 .mini:hover { background: var(--accentDim); color: var(--onAccent); }
 .list { border-radius: 10px; overflow: hidden; }
 .row .plus { flex: none; }
+.row.withact { flex-wrap: wrap; }
+.rowact { flex: 1 0 100%; display:flex; gap:8px; }
+.rowact .mini { flex: 1; }
+.rowact .mini { white-space: nowrap; padding: 6px 10px; }
+.mini.danger:hover { background: var(--bg3); color: var(--t1); }
 .x { flex: none; padding: 6px 10px; border-radius: 10px; color: var(--t3); font-size: 15px; }
 .x:hover { background: var(--bg3); color: var(--t1); }
 .picklist { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--bg2); }
@@ -367,13 +372,14 @@ function render() {
 
 function deckRow(d, fid) {
   const st = stats(d.id), t = now();
-  return `<div class="row" data-act="deck-open" data-id="${d.id}">
+  return `<div class="row${fid ? ' withact' : ''}" data-act="deck-open" data-id="${d.id}">
     <div class="rowmain"><div class="name">${esc(d.name)}</div>
       <div class="meta">${st.total} ${plural(st.total, 'carte', 'cartes')}${st.done ? ` (${st.done} ${plural(st.done, 'terminée', 'terminées')})` : ''} · modifié il y a ${formatAgo(d.updatedAt, t)}${st.last ? ` · révisé il y a ${formatAgo(st.last, t)}` : ''}</div></div>
     <div class="badges"><div class="d ${st.due ? 'on' : ''}">${st.total && st.done === st.total ? 'TERMINÉ' : `${st.due} À FAIRE`}</div>
       <div class="bar ${st.due ? 'due' : st.new ? 'new' : ''}"></div>
       <div class="n">${st.new ? `${st.new} ${plural(st.new, 'NEUVE', 'NEUVES')}` : ''}</div></div>
-    ${fid ? `<button class="x" data-act="folder-remove" data-id="${d.id}" data-f="${fid}" title="Retirer du dossier" aria-label="Retirer du dossier">✕</button>` : ''}
+    ${fid ? `<div class="rowact"><button class="mini" data-act="folder-remove" data-id="${d.id}" data-f="${fid}">Supprimer du dossier</button>
+      <button class="mini danger" data-act="deck-del-row" data-id="${d.id}">Supprimer</button></div>` : ''}
   </div>`;
 }
 const folderIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" style="vertical-align:-3px;margin-right:8px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
@@ -479,6 +485,16 @@ function removeFromFolder(fid, deckId) {
   save();
 }
 function untrackDeck(deckId) { setFolders(data.folders.filter((f) => f.deckIds.includes(deckId)).map((f) => f.id), (f) => ({ deckIds: f.deckIds.filter((x) => x !== deckId) })); }
+// Supprime le deck de l'application entière (tous les dossiers, toutes les cartes), après confirmation.
+function deleteDeckFlow(deckId, after) {
+  const d = data.decks.find((x) => x.id === deckId); if (!d) return;
+  const n = data.cards.filter((c) => c.deckId === d.id).length;
+  confirmBox('Supprimer ce deck ?', `Le deck « ${d.name} » et ses ${n} ${plural(n, 'carte', 'cartes')} seront supprimés de l’application, y compris de tous les dossiers.`, 'Supprimer', () => {
+    data.cards.filter((c) => c.deckId === d.id).forEach((c) => tombstone('card', c.id)); tombstone('deck', d.id); untrackDeck(d.id);
+    data.decks = data.decks.filter((x) => x.id !== d.id); data.cards = data.cards.filter((c) => c.deckId !== d.id);
+    save(); closeModal(); after();
+  });
+}
 function deleteFolder(id) {
   const gone = new Set([id, ...descendants(id)]);
   const parent = fById(id) && fById(id).parentId && fById(fById(id).parentId);
@@ -635,7 +651,7 @@ function planView() {
     <h2 class="sub">Synchronisation</h2>
     <div class="box" id="syncbox">${syncBox()}</div>
     <h2 class="sub">Mes données</h2>
-    <p class="muted" style="margin:-4px 0 10px">Version de l’application : <b>2026-10-31 · v14</b></p>
+    <p class="muted" style="margin:-4px 0 10px">Version de l’application : <b>2026-10-31 · v15</b></p>
     <div class="box"><p class="muted" style="margin:0 0 6px">Tes cartes sont enregistrées dans ce navigateur (et envoyées à ton compte si tu es connecté plus haut). Fais une sauvegarde de temps en temps, surtout si tu n’utilises pas la synchronisation.</p>
       <div class="btnrow"><button class="ghost" data-act="export">⬇ Exporter une sauvegarde</button>
         <button class="ghost" data-act="import">⬆ Importer une sauvegarde</button>
@@ -944,13 +960,8 @@ document.addEventListener('click', (e) => {
         if (name.trim()) { d.name = name.trim(); d.updatedAt = d.u = now(); save(); }
         closeModal(); render();
       }); break; }
-    case 'deck-del': {
-      const d = data.decks.find((x) => x.id === ui.deckId), n = data.cards.filter((c) => c.deckId === d.id).length;
-      confirmBox('Supprimer ce deck ?', `Le deck « ${d.name} » et ses ${n} cartes seront supprimés.`, 'Supprimer', () => {
-        data.cards.filter((c) => c.deckId === d.id).forEach((c) => tombstone('card', c.id)); tombstone('deck', d.id); untrackDeck(d.id);
-        data.decks = data.decks.filter((x) => x.id !== d.id); data.cards = data.cards.filter((c) => c.deckId !== d.id);
-        save(); closeModal(); setView('decks');
-      }); break; }
+    case 'deck-del': deleteDeckFlow(ui.deckId, () => setView('decks')); break;
+    case 'deck-del-row': deleteDeckFlow(id, () => render()); break;
     case 'folder-new': askText('Nouveau dossier', '', 'Créer', (name) => { if (!name.trim()) return; createFolder(name, null); closeModal(); render(); }); break;
     case 'subfolder-new': askText('Nouveau sous-dossier', '', 'Créer', (name) => { if (!name.trim()) return; createFolder(name, ui.folderId); closeModal(); render(); }); break;
     case 'ufolder-open': openFolder(id); break;
