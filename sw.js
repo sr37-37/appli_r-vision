@@ -1,7 +1,7 @@
 // Mode hors connexion : l'application s'ouvre même sans internet.
 // Les cartes ne passent jamais par ici : elles restent dans le navigateur (localStorage).
 // Pour forcer une mise à jour de tout le monde, changer le numéro de version ci-dessous.
-const CACHE = 'revision-v2';
+const CACHE = 'revision-v3';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {

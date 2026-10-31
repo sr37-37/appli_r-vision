@@ -164,7 +164,13 @@ kbd { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
 .lab { display:block; color: var(--t3); font-size: 12px; font-weight: 700; letter-spacing:.05em; text-transform: uppercase; margin: 10px 0 5px; }
 .inp { width:100%; background: var(--bg1); border:1px solid var(--line); border-radius: 12px; padding: 11px 13px; }
 .err { color: var(--t1); font-weight: 600; margin: 12px 0 0; }
+.err:empty { display:none; }
 .syncstat { color: var(--t3); font-size: 13px; margin-right: 8px; white-space: nowrap; }
+.packrow { display:flex; align-items:center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.packrow:last-child { border-bottom: 0; }
+.packrow .rowmain .name { font-size: 17px; }
+.packrow b { flex: none; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; }
 @media (max-width: 560px) {
   header .logo { display:none; }
   .syncstat { display:none; }
@@ -390,11 +396,10 @@ function homeList() {
   const q = norm(ui.q.trim());
   const cardsHtml = cardResults(q);
   const decks = data.decks.filter((d) => !isComplete(d.id) && norm(d.name).includes(q));
-  const finished = data.decks.filter((d) => isComplete(d.id));
   if (!data.decks.length) {
     return `<div class="empty"><div style="font-size:54px">🗂</div><h2>Aucun deck pour l’instant</h2>
       <p>Crée ton premier deck, ajoute des cartes, et l’application te dira quoi réviser et quand.</p>
-      <div class="btnrow" style="justify-content:center"><button class="primary" data-act="deck-new">+ Nouveau deck</button></div></div>`;
+      <div class="btnrow" style="justify-content:center"><button class="primary" data-act="deck-new">+ Nouveau deck</button><button class="ghost" data-act="pack-paste">📋 Coller des cartes</button></div></div>`;
   }
   const withDue = decks.filter((d) => stats(d.id).due > 0).sort((a, b) => stats(b.id).due - stats(a.id).due);
   const others = decks.filter((d) => stats(d.id).due === 0).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -432,7 +437,9 @@ function homeView() {
     ${folders.length ? folders.map((f) => (f === AUTO_ID ? autoFolderRow() : folderRow(f))).join('') : '<p class="muted">Aucun dossier consulté pour l’instant.</p>'}`;
 }
 function decksView() {
-  return `<input class="search" id="q" placeholder="Rechercher un deck ou une carte…" value="${esc(ui.q)}" autocomplete="off"><div id="list">${homeList()}</div>`;
+  return `<div style="display:flex;gap:10px;align-items:flex-start"><input class="search" id="q" placeholder="Rechercher un deck ou une carte…" value="${esc(ui.q)}" autocomplete="off">
+    <button class="ghost" data-act="pack-paste" title="Coller des cartes préparées par Claude ou un autre site" style="flex:none;white-space:nowrap">📋 Coller</button></div>
+    <div id="list">${homeList()}</div>`;
 }
 function foldersView() {
   return `<input class="search" id="fq" placeholder="Rechercher un dossier…" value="${esc(ui.fq)}" autocomplete="off">
@@ -512,7 +519,6 @@ function ufolderBody(f) {
       cardsHtml = cardResults(q, set);
     } else subs = subs.filter((k) => norm(k.name).includes(q));
   }
-  const nothing = q && !(parent ? decks.length || cardsHtml : subs.length);
   return `<h2 class="sub">Decks <button class="plus" data-act="folder-add" data-id="${f.id}" title="Ajouter des decks" aria-label="Ajouter des decks">+</button>
       <span class="muted" style="margin-left:auto">${decks.length}</span></h2>
     ${parent ? `<p class="muted" style="margin:-4px 0 10px">Dans un sous-dossier, tu peux seulement ajouter des decks déjà présents dans « ${esc(parent.name)} ».</p>` : ''}
@@ -534,7 +540,7 @@ function addDecksModal(fid) {
 }
 
 function deckGrid(allCs, cs, t) {
-  if (!allCs.length) return '<p class="muted">Aucune carte. Clique sur + pour en ajouter.</p>';
+  if (!allCs.length) return '<p class="muted">Aucune carte. Clique sur + pour en ajouter, ou sur « Coller » pour ajouter des cartes préparées par Claude.</p>';
   if (!cs.length) return '<p class="muted">Aucune carte ne correspond.</p>';
   return `<div class="grid">${cs.map((c) => `
       <div class="tile ${isDue(c, t) ? 'due' : ''}" data-act="card-edit" data-id="${c.id}">
@@ -577,6 +583,7 @@ function deckView() {
       <button class="${ui.chartMode === 'up' ? 'on' : ''}" data-act="chart" data-id="up">À venir</button></span></h2>
     ${chart(items)}
     <h2 class="sub">Cartes <button class="plus" data-act="card-new" title="Nouvelle carte">+</button>
+      <button class="ghost" data-act="pack-paste" title="Coller des cartes dans ce deck" style="font-size:14px;padding:7px 12px">📋 Coller</button>
       <span class="muted" style="margin-left:auto">${allCs.length}</span></h2>
     ${allCs.length > 1 ? `<input class="search" id="cq" placeholder="Rechercher dans ce deck…" value="${esc(ui.cq)}" autocomplete="off">` : ''}
     <div id="cgrid">${deckGrid(allCs, cs, t)}</div>
@@ -616,19 +623,23 @@ function reviewTabView() {
 
 function planView() {
   const labels = planLabels(TOTAL);
+  const appUrl = location.origin + location.pathname;
   return `<h1 style="margin:0 0 6px">Plan de révision</h1>
     <div class="box"><p style="margin:0">Chaque carte suit la courbe d’Ebbinghaus : des rappels rapprochés la première semaine, puis des révisions de plus en plus espacées (semaines 3, 5, 8, 12, 16). Après la semaine 16, la carte est terminée ; quand toutes les cartes d’un deck sont terminées, le deck passe dans le dossier « ${FOLDER} ».</p>
       <div class="chips">${labels.map((l) => `<span class="chip">${l}</span>`).join('')}<span class="chip dim">✓ Terminée</span></div>
       <p class="muted" style="margin:0">J1 compte deux révisions (la seconde environ 3 h après la première). Pas de révision les J4 et J6. Pendant la semaine 1, une carte oubliée recommence à J1 ; ensuite elle reste à son stade et revient le lendemain jusqu’à être réussie.</p></div>
+    <h2 class="sub">Ajouter des cartes depuis Claude</h2>
+    <div class="box"><p class="muted" style="margin:0 0 6px">Demande à Claude des fiches à partir d’un cours, d’un site ou d’un artéfact. Il te donne un lien « Ajouter à Révision », un texte à coller ou un fichier. Rien n’est remplacé : les decks et dossiers du même nom sont complétés, et une carte déjà présente n’est pas ajoutée deux fois.</p>
+      <div class="btnrow"><button class="primary" data-act="pack-paste">📋 Coller des cartes</button><button class="ghost" data-act="import">⬆ Ouvrir un fichier de cartes</button></div>
+      ${/^https?:$/.test(location.protocol) ? `<p class="muted" style="margin:12px 0 0">Adresse à donner à Claude pour les liens : <span class="mono" style="color:var(--t1)">${esc(appUrl)}</span></p>` : ''}</div>
     <h2 class="sub">Synchronisation</h2>
     <div class="box" id="syncbox">${syncBox()}</div>
     <h2 class="sub">Mes données</h2>
-    <p class="muted" style="margin:-4px 0 10px">Version de l’application : <b>2026-10-28 · v12</b></p>
+    <p class="muted" style="margin:-4px 0 10px">Version de l’application : <b>2026-10-31 · v13</b></p>
     <div class="box"><p class="muted" style="margin:0 0 6px">Tes cartes sont enregistrées dans ce navigateur (et envoyées à ton compte si tu es connecté plus haut). Fais une sauvegarde de temps en temps, surtout si tu n’utilises pas la synchronisation.</p>
       <div class="btnrow"><button class="ghost" data-act="export">⬇ Exporter une sauvegarde</button>
         <button class="ghost" data-act="import">⬆ Importer une sauvegarde</button>
-        <button class="ghost danger" data-act="reset">Tout effacer</button></div>
-      <input type="file" id="file" accept=".json,application/json" hidden></div>`;
+        <button class="ghost danger" data-act="reset">Tout effacer</button></div></div>`;
 }
 
 function reviewView() {
@@ -669,6 +680,10 @@ function confirmBox(title, text, okLabel, cb) {
     <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">Annuler</button><button class="primary" data-act="m-ok">${okLabel}</button></div>`);
   askText.cb = cb;
 }
+function infoBox(title, text) {
+  showModal(`<h2>${esc(title)}</h2><p class="muted" style="font-size:15px">${esc(text)}</p>
+    <div class="actions"><span class="sp"></span><button class="primary" data-act="close">OK</button></div>`);
+}
 function cardModal(cardId, deckId) {
   const c = cardId ? data.cards.find((x) => x.id === cardId) : null;
   const dId = c ? c.deckId : deckId || (data.decks[0] && data.decks[0].id);
@@ -697,6 +712,153 @@ function saveCard(more) {
   save();
   if (more && !cardModal.id) { cardModal(null, deckId); render(); } else { closeModal(); render(); }
 }
+
+/* ========== Ajout de cartes depuis Claude ou un autre site ==========
+   Trois chemins, un seul format : un lien (…/#ajout=…), un texte collé, ou un fichier (.json ou .txt).
+   Rien n'est remplacé : decks et dossiers sont retrouvés par leur nom (sans tenir compte des majuscules
+   ni des accents) ou créés, et une carte dont le recto existe déjà dans le deck n'est pas ajoutée deux fois.
+
+   Format JSON :
+     { "format": "revision-ajout/1",
+       "decks": [ { "nom": "La cellule", "dossier": "SVT/Chapitre 1",
+                    "cartes": [ ["Recto", "Verso"], { "recto": "…", "verso": "…" } ] } ] }
+   Format texte (une carte par ligne, « \n » pour un retour à la ligne dans une carte) :
+     # Dossier : SVT/Chapitre 1
+     # Deck : La cellule
+     Recto :: Verso            (ou Recto<Tabulation>Verso)
+   Lien : <adresse de l'appli>#ajout=z.<JSON compressé deflate-raw, en base64url>  (ou #ajout=j.<JSON en base64url>) */
+function cardPair(x) {
+  let f, b;
+  if (Array.isArray(x)) { f = x[0]; b = x[1]; }
+  else if (x && typeof x === 'object') { f = x.recto ?? x.front ?? x.question ?? x.q; b = x.verso ?? x.back ?? x.reponse ?? x['réponse'] ?? x.answer ?? x.r; }
+  f = String(f ?? '').trim(); b = String(b ?? '').trim();
+  return f ? { front: f, back: b } : null;
+}
+function parsePack(raw, defaultDeck) {
+  raw = String(raw || '').replace(/^\uFEFF/, '').trim();
+  const fallback = defaultDeck || `Cartes importées ${new Date().toLocaleDateString('fr-FR')}`;
+  if (raw[0] === '{' || raw[0] === '[') {
+    let j = JSON.parse(raw);
+    if (Array.isArray(j)) j = j.length && (Array.isArray(j[0]) || j[0].recto != null || j[0].front != null) ? { decks: [{ cartes: j }] } : { decks: j };
+    const decks = (j.decks || []).map((d) => ({
+      name: String(d.nom || d.name || d.deck || '').trim() || fallback,
+      folder: String(d.dossier || d.folder || '').trim(),
+      cards: (d.cartes || d.cards || []).map(cardPair).filter(Boolean),
+    })).filter((d) => d.cards.length);
+    return { decks };
+  }
+  const decks = []; let cur = null, folder = '';
+  const unesc = (s) => s.replace(/\\n/g, '\n').trim();
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const h = line.match(/^\s*#\s*(deck|paquet|dossier|folder)\s*:\s*(.*)$/i);
+    if (h) {
+      if (/^(deck|paquet)$/i.test(h[1])) { cur = { name: h[2].trim() || fallback, folder, cards: [] }; decks.push(cur); }
+      else { folder = h[2].trim(); if (cur && !cur.cards.length) cur.folder = folder; }
+      continue;
+    }
+    let i = line.indexOf('\t'), len = 1;
+    if (i < 0) { i = line.indexOf('::'); len = 2; }
+    if (i < 0) continue;                         // ligne sans séparateur : ignorée
+    const c = cardPair([unesc(line.slice(0, i)), unesc(line.slice(i + len))]);
+    if (!c) continue;
+    if (!cur) { cur = { name: fallback, folder, cards: [] }; decks.push(cur); }
+    cur.cards.push(c);
+  }
+  return { decks: decks.filter((d) => d.cards.length) };
+}
+// Range un deck dans « Dossier/Sous-dossier/… » (crée ce qui manque). Renvoie le nombre de dossiers créés.
+function placeInFolder(deckId, path) {
+  const parts = path.split('/').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return 0;
+  let parentId = null, f = null, created = 0;
+  for (const name of parts) {
+    f = data.folders.find((x) => (parentId ? x.parentId === parentId : isRoot(x)) && norm(x.name) === norm(name));
+    if (!f) { const t = now(); f = { id: uid(), name, parentId, deckIds: [], createdAt: t, u: t }; data.folders.push(f); created++; }
+    parentId = f.id;
+  }
+  if (!f.deckIds.includes(deckId)) {
+    const anc = []; let p = f.parentId && fById(f.parentId);
+    while (p) { if (p.deckIds.includes(deckId)) anc.push(p.id); p = p.parentId && fById(p.parentId); }
+    setFolders([f.id], (g) => ({ deckIds: [...g.deckIds, deckId] }));
+    if (anc.length) setFolders(anc, (g) => ({ deckIds: g.deckIds.filter((x) => x !== deckId) }));   // comme à la main : le deck quitte les dossiers parents
+  }
+  return created;
+}
+function packPlan(pack) {
+  return pack.decks.map((p) => {
+    const deck = data.decks.find((d) => norm(d.name) === norm(p.name));
+    const have = new Set(deck ? data.cards.filter((c) => c.deckId === deck.id).map((c) => norm(c.front)) : []);
+    let fresh = 0; for (const c of p.cards) { const k = norm(c.front); if (!have.has(k)) { fresh++; have.add(k); } }
+    return { ...p, exists: !!deck, fresh, dup: p.cards.length - fresh };
+  });
+}
+function applyPack(pack) {
+  const t = now(), res = { decks: 0, cards: 0, dup: 0, folders: 0, deckIds: [] };
+  for (const p of pack.decks) {
+    let deck = data.decks.find((d) => norm(d.name) === norm(p.name));
+    if (!deck) { deck = { id: uid(), name: p.name, createdAt: t, updatedAt: t, u: t }; data.decks.push(deck); res.decks++; }
+    const have = new Set(data.cards.filter((c) => c.deckId === deck.id).map((c) => norm(c.front)));
+    let added = 0;
+    for (const c of p.cards) {
+      const k = norm(c.front);
+      if (have.has(k)) { res.dup++; continue; }
+      have.add(k);
+      data.cards.push({ id: uid(), deckId: deck.id, front: c.front, back: c.back, createdAt: t + added, step: 0, startDay: null, due: null, lastReview: null, u: t });
+      added++;
+    }
+    res.cards += added;
+    if (added) { deck.updatedAt = t; deck.u = t; }
+    if (p.folder) res.folders += placeInFolder(deck.id, p.folder);
+    res.deckIds.push(deck.id);
+  }
+  save();
+  return res;
+}
+function confirmPack(pack) {
+  if (!pack.decks.length) { infoBox('Rien à ajouter', 'Aucune carte trouvée. Vérifie le format : une carte par ligne, « question :: réponse ».'); return; }
+  const plan = packPlan(pack), fresh = plan.reduce((n, p) => n + p.fresh, 0), dup = plan.reduce((n, p) => n + p.dup, 0);
+  const rows = plan.map((p) => `<div class="packrow"><div class="rowmain"><div class="name">${esc(p.name)}</div>
+      <div class="meta">${p.folder ? `${folderIcon.replace('margin-right:8px', 'margin-right:4px').replace(/20/g, '14')}${esc(p.folder.split('/').map((s) => s.trim()).filter(Boolean).join(' › '))} · ` : ''}${p.exists ? 'deck existant' : 'nouveau deck'}${p.dup ? ` · ${p.dup} déjà ${plural(p.dup, 'présente', 'présentes')}` : ''}</div></div>
+      <b>+${p.fresh}</b></div>`).join('');
+  showModal(`<h2>${fresh ? `Ajouter ${fresh} ${plural(fresh, 'carte', 'cartes')} ?` : 'Ces cartes sont déjà là'}</h2>
+    <div class="picklist">${rows}</div>
+    <p class="muted" style="margin:12px 0 0">${fresh ? 'Les nouvelles cartes commencent à J1.' : 'Toutes ces cartes existent déjà dans leurs decks.'}${dup && fresh ? ` ${dup} ${plural(dup, 'carte déjà présente sera ignorée', 'cartes déjà présentes seront ignorées')}.` : ''}${syncUser ? ' Elles seront envoyées sur tes autres appareils.' : ''}</p>
+    <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">${fresh ? 'Annuler' : 'Fermer'}</button>${fresh || plan.some((p) => p.folder) ? `<button class="primary" data-act="pack-ok">${fresh ? 'Ajouter' : 'Ranger dans les dossiers'}</button>` : ''}</div>`);
+  confirmPack.pack = pack;
+}
+function pasteModal() {
+  const d = ui.tab === 'deck' && data.decks.find((x) => x.id === ui.deckId);
+  pasteModal.deck = d ? d.name : '';
+  showModal(`<h2>Coller des cartes</h2>
+    <p class="muted" style="margin:0 0 8px;font-size:14px">Colle le texte préparé par Claude, ou des lignes « question :: réponse » (une carte par ligne)${d ? `. Sans ligne « # Deck : … », elles iront dans « ${esc(d.name)} »` : ''}.</p>
+    <textarea id="m-pack" class="mono" style="min-height:220px" spellcheck="false" placeholder="# Dossier : SVT/Chapitre 1&#10;# Deck : La cellule&#10;Qu’est-ce qu’une cellule ? :: L’unité de base du vivant"></textarea>
+    <p class="err" id="m-perr"></p>
+    <div class="actions"><span class="sp"></span><button class="ghost" data-act="close">Annuler</button><button class="primary" data-act="pack-read">Continuer</button></div>`);
+  $('#m-pack').focus();
+}
+function b64bytes(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/').replace(/[^A-Za-z0-9+/]/g, ''); while (s.length % 4) s += '=';
+  const bin = atob(s); return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+async function decodeLink(s) {
+  s = decodeURIComponent(s);
+  if (s.startsWith('z.')) {
+    if (!('DecompressionStream' in window)) throw new Error('trop ancien');
+    const stream = new Blob([b64bytes(s.slice(2))]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return await new Response(stream).text();
+  }
+  if (s.startsWith('j.')) return new TextDecoder().decode(b64bytes(s.slice(2)));
+  return s;                                       // texte en clair (lien écrit à la main)
+}
+async function checkLinkImport() {
+  const m = location.hash.match(/^#ajout=(.+)$/s);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);   // le lien ne resservira pas par erreur
+  try { confirmPack(parsePack(await decodeLink(m[1]))); }
+  catch (e) { infoBox('Lien illisible', 'Ce lien d’ajout est incomplet ou abîmé (il a peut-être été coupé). Demande à Claude le texte à coller à la place.'); }
+}
+window.addEventListener('hashchange', checkLinkImport);
 
 /* ========== Actions ========== */
 function startReview(deckId, deckSet) {
@@ -763,6 +925,21 @@ document.addEventListener('click', (e) => {
         const parentId = f.parentId; deleteFolder(f.id); closeModal();
         const p = parentId && fById(parentId); if (p) openFolder(p.id); else setView('folders');
       }); break; }
+    case 'pack-paste': pasteModal(); break;
+    case 'pack-read': {
+      const txt = ($('#m-pack') || {}).value || '';
+      let pack = null;
+      try { pack = parsePack(txt, pasteModal.deck); } catch (err) { $('#m-perr').textContent = 'Texte illisible : le JSON semble incomplet. Recopie-le en entier.'; break; }
+      if (!pack.decks.length) { $('#m-perr').textContent = txt.trim() ? 'Aucune carte trouvée : mets une carte par ligne, sous la forme « question :: réponse ».' : 'Colle d’abord le texte des cartes.'; break; }
+      confirmPack(pack); break; }
+    case 'pack-ok': {
+      const res = applyPack(confirmPack.pack); confirmPack.pack = null; closeModal();
+      if (res.deckIds.length === 1) setView('deck', res.deckIds[0]); else setView('decks');
+      const parts = [`${res.cards} ${plural(res.cards, 'carte ajoutée', 'cartes ajoutées')}`];
+      if (res.decks) parts.push(`${res.decks} ${plural(res.decks, 'nouveau deck', 'nouveaux decks')}`);
+      if (res.folders) parts.push(`${res.folders} ${plural(res.folders, 'dossier créé', 'dossiers créés')}`);
+      if (res.dup) parts.push(`${res.dup} déjà ${plural(res.dup, 'présente ignorée', 'présentes ignorées')}`);
+      infoBox('C’est fait', parts.join(' · ') + '.'); break; }
     case 'sync-login': doAuth('login'); break;
     case 'sync-signup': doAuth('signup'); break;
     case 'sync-reset': doReset(); break;
@@ -808,19 +985,26 @@ document.addEventListener('input', (e) => {
     $('#cgrid').innerHTML = deckGrid(allCs, allCs.filter((c) => cardMatch(c, norm(ui.cq.trim()))), now());
   }
 });
+// Un même bouton de fichier sert aux deux usages : une sauvegarde complète (remplace tout)
+// ou un fichier de cartes préparé par Claude (ajoute sans rien remplacer).
 document.addEventListener('change', (e) => {
   if (e.target.id !== 'file' || !e.target.files[0]) return;
+  const file = e.target.files[0]; e.target.value = '';
   const rd = new FileReader();
   rd.onload = () => {
-    try {
-      const d = JSON.parse(rd.result);
-      if (!Array.isArray(d.decks) || !Array.isArray(d.cards)) throw new Error();
+    const txt = String(rd.result || '');
+    let d = null; try { d = JSON.parse(txt); } catch (err) {}
+    const backup = d && !Array.isArray(d) && Array.isArray(d.decks) && Array.isArray(d.cards);
+    if (backup) {
       confirmBox('Importer cette sauvegarde ?', `${d.decks.length} decks et ${d.cards.length} cartes. Les données actuelles seront remplacées${syncUser ? ' (sur tous tes appareils connectés)' : ''}.`, 'Importer', () => {
         replaceAll({ ...blank(), ...d }); closeModal(); setView('home');
       });
-    } catch (err) { confirmBox('Fichier invalide', 'Ce fichier n’est pas une sauvegarde de Révision.', 'OK', closeModal); }
+      return;
+    }
+    try { const pack = parsePack(txt, file.name.replace(/\.[^.]+$/, '')); if (!pack.decks.length) throw new Error(); confirmPack(pack); }
+    catch (err) { infoBox('Fichier invalide', 'Ce fichier n’est ni une sauvegarde de Révision, ni un fichier de cartes.'); }
   };
-  rd.readAsText(e.target.files[0]);
+  rd.readAsText(file);
 });
 
 document.addEventListener('keydown', (e) => {
@@ -828,6 +1012,7 @@ document.addEventListener('keydown', (e) => {
   if (modalOpen()) {
     if (e.key === 'Escape') closeModal();
     else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && $('#m-front')) saveCard(!cardModal.id);
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && $('#m-pack')) $('[data-act="pack-read"]').click();
     else if (e.key === 'Enter' && $('#m-text') && e.target.id === 'm-text') { e.preventDefault(); askText.cb && askText.cb($('#m-text').value); }
     return;
   }
@@ -1034,7 +1219,9 @@ setInterval(() => scheduleSync(0), 5 * 60 * 1000);
 
 setInterval(() => { if (!ui.review && !modalOpen() && !typing()) render(); }, 60000);
 render();
+checkLinkImport();
 initSync();
 </script>
+<input type="file" id="file" accept=".json,.txt,.tsv,.csv,application/json,text/plain" hidden>
 </body>
 </html>
